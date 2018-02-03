@@ -2516,7 +2516,7 @@ def main_function_createLocationSequenceTable(inputfilename, dailyPatternInterva
     outputName2 = writeFolderName2 + '/' + filename + '_trips.csv'
     outputName3 = writeFolderName3 + '/' + filename + '_locations.csv'
     outputName4 = writeFolderName4 + '/' + filename + '_daySummary.csv'
-    outputName5 = writeFolderName5 + '/' + filename + '_daySequence.csv'
+    # outputName5 = writeFolderName5 + '/' + filename + '_daySequence.csv'
     # i = 'C:/Users/LIANG/OneDrive/Travel Pattern Prediction/Processed_Data/GPS_trips_processed/2-JodieAKulpaEddy_trips.csv'
     # out = 'C:/Users/LIANG/OneDrive/Travel Pattern Prediction/test.csv'
     # out1 = 'C:/Users/LIANG/OneDrive/Travel Pattern Prediction/locationTest.csv'
@@ -2547,9 +2547,16 @@ def main_function_createLocationSequenceTable(inputfilename, dailyPatternInterva
     df.to_csv(outputName2)
     locationDF.to_csv(outputName3)
     print 'daySequenceCreate'
-    DaySequenceSeries = daySequenceCreate(df, outputName5, dailyPatternInterval, startHour)
+    # DaySequenceSeries = daySequenceCreate(df, outputName5, dailyPatternInterval, startHour)
     return
 
+def main_function_createDaySequence(inputfilename, dailyPatternInterval, startHour, writeFolderName5):
+    filename = os.path.basename(inputfilename).split('_')[0]
+    print filename
+    df = readTripsFromCSV(inputfilename)
+    outputName5 = writeFolderName5 + '/' + filename + '_daySequence.csv'
+    daySequenceCreate(df, outputName5, dailyPatternInterval, startHour)
+    return
 
 def matchPointToLocationID_stayRegion(tripDF, locationDF):
     for i in tripDF.index.values:
