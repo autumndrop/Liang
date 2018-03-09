@@ -68,7 +68,7 @@ if not os.path.isdir(outputPointsFolder):
 # i = 'App_data/test/Individuals/6e5c6063-4a47-4cc5-903b-71fd4939c92e.csv'
 # DataProcessingFunctions_Android.main_function_createLocationSequenceTable(i, dailyPatternInterval, startHour, outputPointsFolder, outputTripsFolder,outputLocationsFolder,outputDayActivitiesFolder,outputDaySequenceFolder)
 
-# Step 2.4: generating day sequence files
+# Step 2.4: generating day sequence files. 20 minutes period, if stay in one location, there will be 72 locations
 num_cores = multiprocessing.cpu_count()-2
 if __name__ == '__main__':
    Parallel(n_jobs=num_cores)(delayed(DataProcessingFunctions_Android.main_function_createDaySequence)(i, dailyPatternInterval, startHour,outputDaySequenceFolder) for i in tripList)

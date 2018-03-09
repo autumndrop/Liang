@@ -1582,6 +1582,16 @@ def genericSequenceAlignment(seq1, seq2):
 
 
 def sequenceAlignmentBio(seq1, seq2):
+    '''
+    Find the best global alignment between the two sequences.
+    Identical characters are given 2 points,
+    1 point is deducted for each non-identical character.
+    0.5 points are deducted when opening a gap,
+    and 0.1 points are deducted when extending it.
+    :param seq1: Day sequence 1
+    :param seq2: Day sequence 2
+    :return: The similarity score of the two sequence
+    '''
     combined = seq1 + seq2
     myset = set(combined)
     myset = list(myset)
