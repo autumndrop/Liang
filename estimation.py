@@ -120,7 +120,6 @@ start_date_train = seq1.index.values[0]
 # Location purpose
 home_ID = 0
 work_ID = 1
-
 ##############################################################
 # 6. Determine number of locations and parameters to calibrate
 # Add all the locations visited and frequency into dictionary
@@ -155,7 +154,8 @@ for loc in location_dict:
         location_frequent_dict[loc] = location_dict[loc]
 
 ##############################################################
-# 7. Getting the observed travel time and preferred arrival time
+# 7. Getting information from training data
+# Getting the observed travel time and preferred arrival time
 # Read trip file
 df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
 
@@ -208,52 +208,20 @@ max_home_visits = df_home_number['visitTimes'].max()+1
 df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
 df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
 max_work_visits = df_work_number['visitTimes'].max()
-
+#
 ##############################################################
-# 8. Generate the initial parameter vector
-home_u = 1
-# Work parameters: beta0 (work utility), rho1, rho2 (early late penalty)
-# beta1 and beta2 can be calculated based on observed data
-early_penalty = {}
-late_penalty = {}
-early_penalty[work_ID] = 1
-late_penalty[work_ID] = 1
-work_u = 100
-
-# Non-work parameters: beta (utility decrease rate), rho1, rho2 (early late penalty), deltaU (daily utility increase rate)
-non_work_locations,beta,deltaU = multidict({2:[1,11],3:[1,3]})
-early_penalty[2] = 1
-late_penalty[2] = 1
-early_penalty[3] = 1
-late_penalty[3] = 1
-initialU = {}
-for i in non_work_locations:
-    initialU[i] = calInitialU(i,df_trip_train,start_date_train,deltaU)
-
-# Travel disutility rhoT (we can fix this)
-travel_u = 1
-
-##############################################################
-# 9. Given the parameter vector, predict the activity travel patterns
-
-# For the first day
-current_index = 0
-current_day = seq1.index.values[current_index]
-current_weekday = current_day.weekday()
-work_u_today = work_u * work_days_boolean[current_weekday]
-T = 1440
-M = 2000
-
+# Model set up
 home_locations = range(100, 100+max_home_visits)
 work_locations = range(200,200+max_work_visits)
 work_locations_other = [i for i in work_locations if i != 200]
+non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
 locations = home_locations + work_locations + non_work_locations
 penalty_locations = [work_locations[0]] + non_work_locations
 
-early_penalty[work_locations[0]] = early_penalty[work_ID]
-late_penalty[work_locations[0]] = late_penalty[work_ID]
+T = 1440
+M = 2000
 
-# Capture observed arrival departure time informatino
+# Capture observed arrival departure time information
 work_end_time = findMaxProKernel(dict_endT[work_ID],MIN_STARTTIME,MAX_STARTTIME)
 preferred_arrival = {}
 for i in dict_arrivalT:
@@ -261,8 +229,6 @@ for i in dict_arrivalT:
 preferred_arrival = replaceHomeWorkLocations(preferred_arrival,home_ID,home_locations)
 preferred_arrival = replaceHomeWorkLocations(preferred_arrival,work_ID,work_locations)
 
-# Add travel time
-# Filter travel time dictionary. Only considers those links that have been taken before
 travel_time_dict = {}
 for OD in dict_T:
     if OD[0] in location_frequent_dict and OD[1] in location_frequent_dict:
@@ -270,7 +236,40 @@ for OD in dict_T:
 
 travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
 travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
+##############################################################
+# 8. Generate the initial parameter vector
+# Travel disutility rhoT (we can fix this)
+travel_u = 1
+# Home parameter: home utility
+home_u = 1
+# Work parameters: beta0 (work utility), rho1, rho2 (early late penalty)
+# beta1 and beta2 can be calculated based on observed data
+work_u = 100
+early_penalty = {}
+late_penalty = {}
+early_penalty[work_locations[0]] = 1
+late_penalty[work_locations[0]] = 1
+# Non-work parameters: beta (utility decrease rate), rho1, rho2 (early late penalty), deltaU (daily utility increase rate)
+non_work_locations,beta,deltaU = multidict({2:[1,11],3:[1,3]})
+early_penalty[2] = 1
+late_penalty[2] = 1
+early_penalty[3] = 1
+late_penalty[3] = 1
+initialU = {}
+##############################################################
+# Set other parameters based on given parameter
+for i in non_work_locations:
+    initialU[i] = calInitialU(i,df_trip_train,start_date_train,deltaU)
+##############################################################
+# 9. Given the parameter vector, predict the activity travel patterns
+# For the first day
+current_index = 0
+current_day = seq1.index.values[current_index]
+current_weekday = current_day.weekday()
+work_u_today = work_u * work_days_boolean[current_weekday]
 
+# Add travel time
+# Filter travel time dictionary. Only considers those links that have been taken before
 links = list(travel_time_dict.keys())
 links_home1 = [x for x in links if x[1] == home_locations[0]]
 
