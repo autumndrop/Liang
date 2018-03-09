@@ -7,7 +7,7 @@ import multiprocessing
 from datetime import datetime, timedelta, date
 from scipy.stats import gaussian_kde
 import numpy as np
-
+from noisyopt import minimizeCompass, minimizeSPSA
 from gurobipy import *
 import time
 
@@ -101,6 +101,33 @@ def replaceHomeWorkLinks(o_dict,ID,ID_list):
 
 def daySeqRemoveTravel(o_seq):
     return [x for x in o_seq if x!=-99]
+
+# Convert Gurobi results to day sequence
+def convertGurobiSolutionToDaySeq(node, start_time, end_time):
+    node_visited = [x for x in locations if node[x].X > 0]
+    start_time_visited = [start_time[x].X for x in node_visited]
+    end_time_visited = [end_time[x].X for x in node_visited]
+    # print 'node visited:',node_visited
+    # print 'start time visited', start_time_visited
+    sequence = sorted(range(len(start_time_visited)), key=lambda k: start_time_visited[k])
+    predict_day_seq = []
+    for index in sequence:
+        node_ID = node_visited[index]
+        if node_ID in home_locations:
+            node_ID = home_ID
+        elif node_ID in work_locations:
+            node_ID = work_ID
+        duration_temp = end_time_visited[index] - start_time_visited[index]
+        n1 = round(duration_temp * 1.0 / dailyPatternInterval)
+        for i in range(int(n1)):
+            predict_day_seq.append(node_ID)
+    return predict_day_seq
+
+def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
+    if ID in previous_observed_seq:
+        return deltaU[ID]
+    else:
+        return initialU[ID] + deltaU[ID]
 
 test_path = parent_path + '/App_data/test/'
 test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
@@ -238,230 +265,239 @@ travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
 travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
 ##############################################################
 # 8. Generate the initial parameter vector
-# Travel disutility rhoT (we can fix this)
-travel_u = 1
-# Home parameter: home utility
-home_u = 1
-# Work parameters: beta0 (work utility), rho1, rho2 (early late penalty)
-# beta1 and beta2 can be calculated based on observed data
-work_u = 100
-early_penalty = {}
-late_penalty = {}
-early_penalty[work_locations[0]] = 1
-late_penalty[work_locations[0]] = 1
-# Non-work parameters: beta (utility decrease rate), rho1, rho2 (early late penalty), deltaU (daily utility increase rate)
-non_work_locations,beta,deltaU = multidict({2:[1,11],3:[1,3]})
-early_penalty[2] = 1
-late_penalty[2] = 1
-early_penalty[3] = 1
-late_penalty[3] = 1
-initialU = {}
-##############################################################
-# Set other parameters based on given parameter
-for i in non_work_locations:
-    initialU[i] = calInitialU(i,df_trip_train,start_date_train,deltaU)
-##############################################################
-# 9. Given the parameter vector, predict the activity travel patterns
-# For the first day
-current_index = 0
-current_day = seq1.index.values[current_index]
-current_weekday = current_day.weekday()
-work_u_today = work_u * work_days_boolean[current_weekday]
+# Parameter explanation
+# 1. home_u
+# 2. work_u
+# 3. work early penalty
+# 4. work late penalty
+# Afterwards are the parameters for non-work activities. For each activity, there are 4 parameters
+#     1. Beta, which is the utility decrease rate by minute (marginal utility decreases along with time)
+#     2. deltaU, which is the need growth rate
+#     3. early penalty
+#     4. late penalty
+input_parameters = [1,100,1,1,1,11,1,1,1,3,1,1]
+bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
 
-# Add travel time
-# Filter travel time dictionary. Only considers those links that have been taken before
-links = list(travel_time_dict.keys())
-links_home1 = [x for x in links if x[1] == home_locations[0]]
-
-machine_start_time = time.time()
-# Create optimization model
-m = Model("routing")
-
-# Create decision variables
-node = m.addVars(locations,name="node",vtype = GRB.BINARY)
-link = m.addVars(links,name="link",vtype = GRB.BINARY)
-start_time = m.addVars(locations, lb=MIN_STARTTIME, ub = MAX_STARTTIME,name="start_time")
-end_time = m.addVars(locations, lb=MIN_STARTTIME, ub = MAX_STARTTIME,name="end_time")
-
-# Create intermediate variables
-au_early = m.addVars(penalty_locations, lb=0,ub=MAX_DURATION,name="au_early")
-au_late = m.addVars(penalty_locations, lb=0,ub=MAX_DURATION,name="au_late")
-au_b = m.addVars(links,name="au_b",vtype = GRB.BINARY)
-au_a_list = [1,2]
-au_a = m.addVars(work_locations,au_a_list,name="au_a")
-
-# Set objective
-obj = QuadExpr()
-obj += sum((initialU[i] * ( end_time[i] - start_time[i] ) - 0.5*beta[i] * (end_time[i] - start_time[i] )* ( end_time[i] - start_time[i] ))
-    for i in non_work_locations)
-obj += sum((end_time[i] - start_time[i] ) * home_u
-    for i in home_locations)
-obj += sum((au_a[i,1] - au_a[i,2] ) * work_u_today
-    for i in work_locations)
-obj += -sum((au_early[i] * early_penalty[i] + au_late[i] * late_penalty[i])
-    for i in penalty_locations)
-obj += -sum((travel_time_dict[i] * link[i] * travel_u)
-    for i in links)
-m.setObjective(obj, GRB.MAXIMIZE)
-
-# Add constraint: abs for work
-m.addConstrs(
-    (au_a[i,1] <= work_end_time
-    for i in work_locations),"work_abs_1")
-m.addConstrs(
-    (au_a[i,1] <= end_time[i]
-    for i in work_locations),"work_abs_2")
-m.addConstrs(
-    (au_a[i,2] >= preferred_arrival[work_locations[0]]
-    for i in work_locations),"work_abs_3")
-m.addConstrs(
-    (au_a[i,2] >= start_time[i]
-    for i in work_locations),"work_abs_4")
-
-if len(work_locations_other) > 0:
-    m.addConstrs(
-        (node[i] <= node[work_locations[0]]
-         for i in work_locations_other), "work_abs_5")
-
-# Add constraint: start location constraint
-m.addConstr(
-    (node[home_locations[0]] - 1 == 0)
-    ,"start_location1")
-m.addConstr(
-    (start_time[home_locations[0]] == MIN_STARTTIME)
-    ,"start_location2")
-m.addConstrs(
-    (link[i] == 0
-    for i in links_home1),"start_location3")
-
-# Home location sequence
-if len(home_locations) > 2:
-    m.addConstrs(
-        (node[home_locations[i]] >= node[home_locations[i+1]]
-         for i in range(len(home_locations)-2)), "home_location_sequence")
-
-# Add constraint: network flow constraint
-m.addConstrs(
-    (link.sum('*',i) <=node[i]
-    for i in locations),"inflow")
-m.addConstrs(
-    (link.sum(i,'*') <=node[i]
-    for i in locations),"outflow")
-
-# Add constraint: it's a route instead of a circle
-m.addConstr(
-    (node.sum('*') - link.sum('*','*')==1)
-    ,"route_constraint")
-
-# Add constraint: time consistency constraint
-m.addConstrs(
-    ((link[i] - au_b[i] <= 0)
-    for i in links),"time_consistency_1")
-m.addConstrs(
-    ((end_time[i[0]] + travel_time_dict[i] - start_time[i[1]] + (1-au_b[i])* M >= 0)
-    for i in links),"time_consistency_2")
-m.addConstrs(
-    ((end_time[i[0]] + travel_time_dict[i] - start_time[i[1]] - (1-au_b[i])* M <= 0)
-    for i in links),"time_consistency_3")
-m.addConstrs(
-    ((start_time[i] <= end_time[i])
-    for i in locations),"time_consistency_4")
-    #Add constraint: total time budget
-constr_total_time = LinExpr()
-constr_total_time += end_time.sum('*') - start_time.sum('*')
-constr_total_time += sum(link[i]*travel_time_dict[i] for i in links)
-m.addConstr(
-    constr_total_time == T
-    ,"total_time_budget")
-
-# Add constraint: fix the activity start time and end time for not active activities
-m.addConstrs(
-    ((start_time[i] - preferred_arrival[i] + M*node[i] >= 0)
-    for i in locations),"fix_not_active_activities1")
-m.addConstrs(
-    ((start_time[i] - preferred_arrival[i] - M*node[i] <= 0)
-    for i in locations),"fix_not_active_activities2")
-
-m.addConstrs(
-    ((end_time[i] - preferred_arrival[i] + M*node[i] >= 0)
-    for i in locations),"fix_not_active_activities3")
-m.addConstrs(
-    ((end_time[i] - preferred_arrival[i] - M*node[i] <= 0)
-    for i in locations),"fix_not_active_activities4")
-
-# Add constraint: start early or late
-m.addConstrs(
-    ((start_time[i]+ au_early[i] - au_late[i] - preferred_arrival[i] == 0)
-    for i in penalty_locations),"early_late"
-)
-
-# Compute optimal solution
-m.setParam('OutputFlag',False)
-m.optimize()
-# Print solution
-# if m.status == GRB.Status.OPTIMAL:
-#     for v in m.getVars()[0:90]:
-#         print(v.varName, v.x)
-
-
-# Convert Gurobi results to day sequence
-def convertGurobiSolutionToDaySeq(node, start_time, end_time):
-    node_visited = [x for x in locations if node[x].X > 0]
-    start_time_visited = [start_time[x].X for x in node_visited]
-    end_time_visited = [end_time[x].X for x in node_visited]
-    print 'node visited:',node_visited
-    print 'start time visited', start_time_visited
-    sequence = sorted(range(len(start_time_visited)), key=lambda k: start_time_visited[k])
-    predict_day_seq = []
-    for index in sequence:
-        node_ID = node_visited[index]
-        if node_ID in home_locations:
-            node_ID = home_ID
-        elif node_ID in work_locations:
-            node_ID = work_ID
-        duration_temp = end_time_visited[index] - start_time_visited[index]
-        n1 = round(duration_temp * 1.0 / dailyPatternInterval)
-        for i in range(int(n1)):
-            predict_day_seq.append(node_ID)
-    return predict_day_seq
-
-predict_day_seq = convertGurobiSolutionToDaySeq(node, start_time, end_time)
-observed_day_seq = daySeqRemoveTravel(seq_train[current_day])
-similarity_score = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq,observed_day_seq)
-
-def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
-    if ID in previous_observed_seq:
-        return deltaU[ID]
-    else:
-        return initialU[ID] + deltaU[ID]
-
-for current_index in range(1,60):
+def similarityEvaluationForParameterSet(input_parameters):
+    # Travel disutility rhoT (we can fix this)
+    travel_u = 1
+    # Home parameter: home utility
+    home_u = input_parameters[0]
+    # Work parameters: beta0 (work utility), rho1, rho2 (early late penalty)
+    # beta1 and beta2 can be calculated based on observed data
+    work_u = input_parameters[1]
+    early_penalty = {}
+    late_penalty = {}
+    early_penalty[work_locations[0]] = input_parameters[2]
+    late_penalty[work_locations[0]] = input_parameters[3]
+    # Non-work parameters: beta (utility decrease rate), deltaU(daily utility increase rate), rho1, rho2 (early late penalty)
+    beta = {}
+    deltaU = {}
+    parameter_index = 4
+    for ID in non_work_locations:
+        beta[ID] = input_parameters[parameter_index]
+        parameter_index += 1
+        deltaU[ID] = input_parameters[parameter_index]
+        parameter_index += 1
+        early_penalty[ID] = input_parameters[parameter_index]
+        parameter_index += 1
+        late_penalty[ID] = input_parameters[parameter_index]
+    # non_work_locations,beta,deltaU = multidict({2:[1,11],3:[1,3]})
+    # early_penalty[2] = 1
+    # late_penalty[2] = 1
+    # early_penalty[3] = 1
+    # late_penalty[3] = 1
+    initialU = {}
+    ##############################################################
+    # Set other parameters based on given parameter
+    for i in non_work_locations:
+        initialU[i] = calInitialU(i,df_trip_train,start_date_train,deltaU)
+    ##############################################################
+    # 9. Given the parameter vector, predict the activity travel patterns
+    # For the first day
+    current_index = 0
     current_day = seq1.index.values[current_index]
-    previous_day = seq1.index.values[current_index - 1]
-    print current_day
     current_weekday = current_day.weekday()
     work_u_today = work_u * work_days_boolean[current_weekday]
-    for ID in non_work_locations:
-        initialU[ID] = updateInitialUtility(ID, initialU,seq_train[previous_day], deltaU)
-    print 'Work u today:', work_u_today,initialU
-    # Update objective
+
+    # Add travel time
+    # Filter travel time dictionary. Only considers those links that have been taken before
+    links = list(travel_time_dict.keys())
+    links_home1 = [x for x in links if x[1] == home_locations[0]]
+
+    machine_start_time = time.time()
+    # Create optimization model
+    m = Model("routing")
+
+    # Create decision variables
+    node = m.addVars(locations,name="node",vtype = GRB.BINARY)
+    link = m.addVars(links,name="link",vtype = GRB.BINARY)
+    start_time = m.addVars(locations, lb=MIN_STARTTIME, ub = MAX_STARTTIME,name="start_time")
+    end_time = m.addVars(locations, lb=MIN_STARTTIME, ub = MAX_STARTTIME,name="end_time")
+
+    # Create intermediate variables
+    au_early = m.addVars(penalty_locations, lb=0,ub=MAX_DURATION,name="au_early")
+    au_late = m.addVars(penalty_locations, lb=0,ub=MAX_DURATION,name="au_late")
+    au_b = m.addVars(links,name="au_b",vtype = GRB.BINARY)
+    au_a_list = [1,2]
+    au_a = m.addVars(work_locations,au_a_list,name="au_a")
+
+    # Set objective
     obj = QuadExpr()
-    obj += sum((initialU[i] * (end_time[i] - start_time[i]) - 0.5 * beta[i] * (end_time[i] - start_time[i]) * (
-    end_time[i] - start_time[i]))
-               for i in non_work_locations)
-    obj += sum((end_time[i] - start_time[i]) * home_u
-               for i in home_locations)
-    obj += sum((au_a[i, 1] - au_a[i, 2]) * work_u_today
-               for i in work_locations)
+    obj += sum((initialU[i] * ( end_time[i] - start_time[i] ) - 0.5*beta[i] * (end_time[i] - start_time[i] )* ( end_time[i] - start_time[i] ))
+        for i in non_work_locations)
+    obj += sum((end_time[i] - start_time[i] ) * home_u
+        for i in home_locations)
+    obj += sum((au_a[i,1] - au_a[i,2] ) * work_u_today
+        for i in work_locations)
     obj += -sum((au_early[i] * early_penalty[i] + au_late[i] * late_penalty[i])
-                for i in penalty_locations)
+        for i in penalty_locations)
     obj += -sum((travel_time_dict[i] * link[i] * travel_u)
-                for i in links)
+        for i in links)
     m.setObjective(obj, GRB.MAXIMIZE)
+
+    # Add constraint: abs for work
+    m.addConstrs(
+        (au_a[i,1] <= work_end_time
+        for i in work_locations),"work_abs_1")
+    m.addConstrs(
+        (au_a[i,1] <= end_time[i]
+        for i in work_locations),"work_abs_2")
+    m.addConstrs(
+        (au_a[i,2] >= preferred_arrival[work_locations[0]]
+        for i in work_locations),"work_abs_3")
+    m.addConstrs(
+        (au_a[i,2] >= start_time[i]
+        for i in work_locations),"work_abs_4")
+
+    if len(work_locations_other) > 0:
+        m.addConstrs(
+            (node[i] <= node[work_locations[0]]
+             for i in work_locations_other), "work_abs_5")
+
+    # Add constraint: start location constraint
+    m.addConstr(
+        (node[home_locations[0]] - 1 == 0)
+        ,"start_location1")
+    m.addConstr(
+        (start_time[home_locations[0]] == MIN_STARTTIME)
+        ,"start_location2")
+    m.addConstrs(
+        (link[i] == 0
+        for i in links_home1),"start_location3")
+
+    # Home location sequence
+    if len(home_locations) > 2:
+        m.addConstrs(
+            (node[home_locations[i]] >= node[home_locations[i+1]]
+             for i in range(len(home_locations)-2)), "home_location_sequence")
+
+    # Add constraint: network flow constraint
+    m.addConstrs(
+        (link.sum('*',i) <=node[i]
+        for i in locations),"inflow")
+    m.addConstrs(
+        (link.sum(i,'*') <=node[i]
+        for i in locations),"outflow")
+
+    # Add constraint: it's a route instead of a circle
+    m.addConstr(
+        (node.sum('*') - link.sum('*','*')==1)
+        ,"route_constraint")
+
+    # Add constraint: time consistency constraint
+    m.addConstrs(
+        ((link[i] - au_b[i] <= 0)
+        for i in links),"time_consistency_1")
+    m.addConstrs(
+        ((end_time[i[0]] + travel_time_dict[i] - start_time[i[1]] + (1-au_b[i])* M >= 0)
+        for i in links),"time_consistency_2")
+    m.addConstrs(
+        ((end_time[i[0]] + travel_time_dict[i] - start_time[i[1]] - (1-au_b[i])* M <= 0)
+        for i in links),"time_consistency_3")
+    m.addConstrs(
+        ((start_time[i] <= end_time[i])
+        for i in locations),"time_consistency_4")
+        #Add constraint: total time budget
+    constr_total_time = LinExpr()
+    constr_total_time += end_time.sum('*') - start_time.sum('*')
+    constr_total_time += sum(link[i]*travel_time_dict[i] for i in links)
+    m.addConstr(
+        constr_total_time == T
+        ,"total_time_budget")
+
+    # Add constraint: fix the activity start time and end time for not active activities
+    m.addConstrs(
+        ((start_time[i] - preferred_arrival[i] + M*node[i] >= 0)
+        for i in locations),"fix_not_active_activities1")
+    m.addConstrs(
+        ((start_time[i] - preferred_arrival[i] - M*node[i] <= 0)
+        for i in locations),"fix_not_active_activities2")
+
+    m.addConstrs(
+        ((end_time[i] - preferred_arrival[i] + M*node[i] >= 0)
+        for i in locations),"fix_not_active_activities3")
+    m.addConstrs(
+        ((end_time[i] - preferred_arrival[i] - M*node[i] <= 0)
+        for i in locations),"fix_not_active_activities4")
+
+    # Add constraint: start early or late
+    m.addConstrs(
+        ((start_time[i]+ au_early[i] - au_late[i] - preferred_arrival[i] == 0)
+        for i in penalty_locations),"early_late"
+    )
+
+    # Compute optimal solution
+    m.setParam('OutputFlag',False)
     m.optimize()
+    # Print solution
+    # if m.status == GRB.Status.OPTIMAL:
+    #     for v in m.getVars()[0:90]:
+    #         print(v.varName, v.x)
+
     predict_day_seq = convertGurobiSolutionToDaySeq(node, start_time, end_time)
     observed_day_seq = daySeqRemoveTravel(seq_train[current_day])
-    print 'predicted activity set:',set(predict_day_seq),'observed activity set:',set(observed_day_seq)
-    similarity_score_today = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq, observed_day_seq)
-    similarity_score += similarity_score_today
-    print 'similarity score today:',similarity_score_today, 'total:',similarity_score
+    similarity_score = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq,observed_day_seq)
+
+    for current_index in range(1,60):
+        current_day = seq1.index.values[current_index]
+        previous_day = seq1.index.values[current_index - 1]
+        # print current_day
+        current_weekday = current_day.weekday()
+        work_u_today = work_u * work_days_boolean[current_weekday]
+        for ID in non_work_locations:
+            initialU[ID] = updateInitialUtility(ID, initialU,seq_train[previous_day], deltaU)
+        # print 'Work u today:', work_u_today,initialU
+        # Update objective
+        obj = QuadExpr()
+        obj += sum((initialU[i] * (end_time[i] - start_time[i]) - 0.5 * beta[i] * (end_time[i] - start_time[i]) * (
+        end_time[i] - start_time[i]))
+                   for i in non_work_locations)
+        obj += sum((end_time[i] - start_time[i]) * home_u
+                   for i in home_locations)
+        obj += sum((au_a[i, 1] - au_a[i, 2]) * work_u_today
+                   for i in work_locations)
+        obj += -sum((au_early[i] * early_penalty[i] + au_late[i] * late_penalty[i])
+                    for i in penalty_locations)
+        obj += -sum((travel_time_dict[i] * link[i] * travel_u)
+                    for i in links)
+        m.setObjective(obj, GRB.MAXIMIZE)
+        m.optimize()
+        predict_day_seq = convertGurobiSolutionToDaySeq(node, start_time, end_time)
+        observed_day_seq = daySeqRemoveTravel(seq_train[current_day])
+        # print 'predicted activity set:',set(predict_day_seq),'observed activity set:',set(observed_day_seq)
+        similarity_score_today = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq, observed_day_seq)
+        similarity_score += similarity_score_today
+        # print 'similarity score today:',similarity_score_today, 'total:',similarity_score
+    print 'Total:',similarity_score,'input parameters',input_parameters
+    return -similarity_score
+
+input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
+# input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
+bounds = [[0,10],[0,50],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+
+# res = minimizeSPSA(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=1000, paired=False)
+# res = minimizeCompass(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, deltatol=1, paired=False)
+# print(res)
+
+similarityEvaluationForParameterSet(input_parameters)
