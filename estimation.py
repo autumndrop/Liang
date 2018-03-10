@@ -130,8 +130,10 @@ def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
         return initialU[ID] + deltaU[ID]
 
 test_path = parent_path + '/App_data/test/'
-test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
+# test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
+test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
 fileID = os.path.basename(test_file).split('_')[0]
+print fileID
 seq_file = test_path + fileID + '_daySequence.csv'
 trip_file = test_path + fileID + '_trips.csv'
 seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
@@ -172,6 +174,7 @@ for i in seq_train.index.values:
 work_days_boolean = {}
 for i in work_days_dict:
     work_days_boolean[i] = round( sum(work_days_dict[i]) * 1.0 / len(work_days_dict))
+print 'Work days:',work_days_boolean
 
 # Only keep the locations been visited certain times
 location_frequent_dict = {}
@@ -179,7 +182,7 @@ NUMBER_VISIT_BUFFER = 2
 for loc in location_dict:
     if location_dict[loc] > NUMBER_VISIT_BUFFER:
         location_frequent_dict[loc] = location_dict[loc]
-
+print 'Frequent visited locations:',location_frequent_dict
 ##############################################################
 # 7. Getting information from training data
 # Getting the observed travel time and preferred arrival time
@@ -492,12 +495,27 @@ def similarityEvaluationForParameterSet(input_parameters):
     print 'Total:',similarity_score,'input parameters',input_parameters
     return -similarity_score
 
-input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
+input_parameters = []
+bounds = []
+# Add home parameters
+input_parameters.append(1)
+bounds.append([0,10])
+# Add work parameters
+input_parameters = input_parameters + [50,1,1]
+bounds = bounds + [[0,50],[0,5],[0,5]]
+# Add nonwork parameters
+for i in non_work_locations:
+    input_parameters = input_parameters + [1,5,1,1]
+    bounds = bounds + [[0,10],[0,20],[0,5],[0,5]]
 # input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
-bounds = [[0,10],[0,50],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+# # input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
+# bounds = [[0,10],[0,50],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
 
-# res = minimizeSPSA(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=1000, paired=False)
+machine_start_time = time.time()
+res = minimizeSPSA(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=200, paired=False)
 # res = minimizeCompass(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, deltatol=1, paired=False)
-# print(res)
+machine_elapsed_time = time.time() - machine_start_time
+print machine_elapsed_time
+print res
 
 similarityEvaluationForParameterSet(input_parameters)
