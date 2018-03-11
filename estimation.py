@@ -7,10 +7,12 @@ import multiprocessing
 from datetime import datetime, timedelta, date
 from scipy.stats import gaussian_kde
 import numpy as np
-from noisyopt import minimizeCompass, minimizeSPSA
+# from noisyopt import minimizeCompass, minimizeSPSA_Liang
+from SPSA import minimizeSPSA_Liang
 from gurobipy import *
 import time
-
+from scipy.optimize import minimize,differential_evolution
+from scipy import optimize
 import DataProcessingFunctions_Android
 reload(DataProcessingFunctions_Android)
 
@@ -131,15 +133,17 @@ def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
 
 test_path = parent_path + '/App_data/test/'
 # test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
-test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
+# test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
+test_file = parent_path + '/App_data/test/95d25557-f49b-40b0-ba50-b340ef1804f7_trips.csv'
 fileID = os.path.basename(test_file).split('_')[0]
 print fileID
 seq_file = test_path + fileID + '_daySequence.csv'
-trip_file = test_path + fileID + '_trips.csv'
+trip_file = test_path + fileID + '_trips.csv'   
 seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
 seq1 = seq[1:]
 
 # Seperate data into training set and test set
+N_DAYS = 60
 seq_train = seq1[0:60]
 seq_test = seq1[60:]
 end_date_train = seq1.index.values[59]
@@ -193,6 +197,7 @@ df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
 dict_T = {}
 dict_arrivalT = {}
 dict_endT = {}
+dict_duration_raw = {}
 
 df_trip['date'] = None
 for i in df_trip.index.values:
@@ -208,11 +213,17 @@ for i in df_trip.index.values:
     D_ID = df_trip.loc[i,'locationID_D']
     OD_pair = (O_ID, D_ID)
     travel_time = df_trip.loc[i,'trip_time'].seconds/60.0
+    duration = df_trip.loc[i,'duration_D'].seconds/60.0
     # Update travel time dictionary
     if OD_pair not in dict_T:
         dict_T[OD_pair] = [travel_time]
     else:
         dict_T[OD_pair].append(travel_time)
+    if D_ID in location_frequent_dict:
+        if D_ID not in dict_duration_raw:
+            dict_duration_raw[D_ID] = [duration]
+        else:
+            dict_duration_raw[D_ID].append(duration)
     # Update preferred arrival time list
     arrival_time = df_trip.loc[i,'end_time']
     arrival_time_t = arrival_time.hour * 60 + arrival_time.minute + arrival_time.second/60.0
@@ -238,6 +249,11 @@ max_home_visits = df_home_number['visitTimes'].max()+1
 df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
 df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
 max_work_visits = df_work_number['visitTimes'].max()
+
+# Avg day distance for frequent locations
+dict_frequent_day_distance = {}
+for ID in location_frequent_dict:
+    dict_frequent_day_distance[ID] = N_DAYS * 1.0/location_frequent_dict[ID]
 #
 ##############################################################
 # Model set up
@@ -245,6 +261,7 @@ home_locations = range(100, 100+max_home_visits)
 work_locations = range(200,200+max_work_visits)
 work_locations_other = [i for i in work_locations if i != 200]
 non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
+print 'non-work locations:',non_work_locations
 locations = home_locations + work_locations + non_work_locations
 penalty_locations = [work_locations[0]] + non_work_locations
 
@@ -266,6 +283,12 @@ for OD in dict_T:
 
 travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
 travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
+
+dict_duration = {}
+for ID in dict_duration_raw:
+    dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID],MIN_DURATION,MAX_DURATION)
+
+print 'Duration of non-work activities:',dict_duration
 ##############################################################
 # 8. Generate the initial parameter vector
 # Parameter explanation
@@ -292,24 +315,22 @@ def similarityEvaluationForParameterSet(input_parameters):
     early_penalty = {}
     late_penalty = {}
     early_penalty[work_locations[0]] = input_parameters[2]
-    late_penalty[work_locations[0]] = input_parameters[3]
+    late_penalty[work_locations[0]] = input_parameters[2]
     # Non-work parameters: beta (utility decrease rate), deltaU(daily utility increase rate), rho1, rho2 (early late penalty)
     beta = {}
     deltaU = {}
-    parameter_index = 4
+    parameter_index = 3
     for ID in non_work_locations:
-        beta[ID] = input_parameters[parameter_index]
-        parameter_index += 1
+        # beta[ID] = input_parameters[parameter_index]
+        # parameter_index += 1
+
         deltaU[ID] = input_parameters[parameter_index]
         parameter_index += 1
         early_penalty[ID] = input_parameters[parameter_index]
-        parameter_index += 1
+        # parameter_index += 1
         late_penalty[ID] = input_parameters[parameter_index]
-    # non_work_locations,beta,deltaU = multidict({2:[1,11],3:[1,3]})
-    # early_penalty[2] = 1
-    # late_penalty[2] = 1
-    # early_penalty[3] = 1
-    # late_penalty[3] = 1
+        parameter_index += 1
+        beta[ID] = max((deltaU[ID] * dict_frequent_day_distance[ID] - home_u),0) * 1.0 / dict_duration[ID]
     initialU = {}
     ##############################################################
     # Set other parameters based on given parameter
@@ -495,27 +516,34 @@ def similarityEvaluationForParameterSet(input_parameters):
     print 'Total:',similarity_score,'input parameters',input_parameters
     return -similarity_score
 
+machine_start_time = time.time()
+
+##############################################################
+# SPSA Optimization
+# input_parameters = [1,100,1,0,1,0,1,0,1,0,1,0,1]
+# bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+# similarityEvaluationForParameterSet(input_parameters)
+
 input_parameters = []
 bounds = []
 # Add home parameters
 input_parameters.append(1)
 bounds.append([0,10])
 # Add work parameters
-input_parameters = input_parameters + [50,1,1]
-bounds = bounds + [[0,50],[0,5],[0,5]]
+input_parameters = input_parameters + [30,1]
+bounds = bounds + [[0,50],[0,5]]
 # Add nonwork parameters
 for i in non_work_locations:
-    input_parameters = input_parameters + [1,5,1,1]
-    bounds = bounds + [[0,10],[0,20],[0,5],[0,5]]
-# input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
-# # input_parameters = [1,50,1,1,0,0,1,1,0,0,1,1]
-# bounds = [[0,10],[0,50],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+    input_parameters = input_parameters + [0,0]
+    bounds = bounds + [[0,20],[0,5]]
 
-machine_start_time = time.time()
-res = minimizeSPSA(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=200, paired=False)
-# res = minimizeCompass(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, deltatol=1, paired=False)
+res = minimizeSPSA_Liang(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=30, paired=False)
+print res
+##############################################################
+# Brute optimization
+# rranges = (slice(0,2,1),slice(0,50,10),slice(0, 2, 1), slice(0, 2, 1),slice(0,10,5),slice(0,20,5),slice(0,2,1),slice(0,2,1),slice(0,10,5),slice(0,10,2),slice(0,2,1),slice(0,2,1))
+# res = optimize.brute(similarityEvaluationForParameterSet,rranges,full_output=True, finish=None)
+
 machine_elapsed_time = time.time() - machine_start_time
 print machine_elapsed_time
-print res
 
-similarityEvaluationForParameterSet(input_parameters)
