@@ -312,7 +312,7 @@ bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0
 
 def similarityEvaluationForParameterSet(input_parameters):
     # Travel disutility rhoT (we can fix this)
-    travel_u = 1
+    travel_u = 0.1
     # Home parameter: home utility
     home_u = input_parameters[0]
     # Work parameters: beta0 (work utility), rho1, rho2 (early late penalty)
@@ -323,7 +323,7 @@ def similarityEvaluationForParameterSet(input_parameters):
     early_penalty[work_locations[0]] = input_parameters[2]
     late_penalty[work_locations[0]] = input_parameters[2]
     # Non-work parameters: beta (utility decrease rate), deltaU(daily utility increase rate), rho1, rho2 (early late penalty)
-    beta = {}
+    # beta = {}
     deltaU = {}
     parameter_index = 3
     for ID in non_work_locations:
@@ -336,7 +336,9 @@ def similarityEvaluationForParameterSet(input_parameters):
         # parameter_index += 1
         late_penalty[ID] = input_parameters[parameter_index]
         parameter_index += 1
-        beta[ID] = max((deltaU[ID] * dict_frequent_day_distance[ID] - home_u),0) * 1.0 / dict_duration[ID]
+        # beta[ID] = max((deltaU[ID] * 1.0 * dict_frequent_day_distance[ID] - home_u),0) * 1.0 / dict_duration[ID]
+    print 'deltaU:',deltaU
+    # print 'beta:',beta
     initialU = {}
     ##############################################################
     # Set other parameters based on given parameter
@@ -374,8 +376,10 @@ def similarityEvaluationForParameterSet(input_parameters):
 
     # Set objective
     obj = QuadExpr()
-    obj += sum((initialU[i] * ( end_time[i] - start_time[i] ) - 0.5*beta[i] * (end_time[i] - start_time[i] )* ( end_time[i] - start_time[i] ))
-        for i in non_work_locations)
+    # obj += sum((initialU[i] * ( end_time[i] - start_time[i] ) - 0.5*beta[i] * (end_time[i] - start_time[i] )* ( end_time[i] - start_time[i] ))
+    #     for i in non_work_locations)
+    obj += sum((initialU[i] * (end_time[i] - start_time[i]) )
+               for i in non_work_locations)
     obj += sum((end_time[i] - start_time[i] ) * home_u
         for i in home_locations)
     obj += sum((au_a[i,1] - au_a[i,2] ) * work_u_today
@@ -454,6 +458,14 @@ def similarityEvaluationForParameterSet(input_parameters):
     m.addConstrs(
         ((start_time[i] <= end_time[i])
         for i in locations),"time_consistency_4")
+
+    m.addConstrs(
+        ((end_time[i]- start_time[i] - dict_duration[i] - (1-node[i]) * M  <= 0)
+         for i in non_work_locations), "time_consistency_5")
+
+    m.addConstrs(
+        ((end_time[i] - start_time[i] - dict_duration[i] +(1- node[i]) * M >= 0)
+         for i in non_work_locations), "time_consistency_6")
         #Add constraint: total time budget
     constr_total_time = LinExpr()
     constr_total_time += end_time.sum('*') - start_time.sum('*')
@@ -486,7 +498,7 @@ def similarityEvaluationForParameterSet(input_parameters):
     # Compute optimal solution
     m.setParam('OutputFlag',False)
     m.optimize()
-    # Print solution
+    # # Print solution
     # if m.status == GRB.Status.OPTIMAL:
     #     for v in m.getVars()[0:90]:
     #         print(v.varName, v.x)
@@ -503,11 +515,14 @@ def similarityEvaluationForParameterSet(input_parameters):
         work_u_today = work_u * work_days_boolean[current_weekday]
         for ID in non_work_locations:
             initialU[ID] = updateInitialUtility(ID, initialU,seq_train[previous_day], deltaU)
+        print 'initialU:',initialU
         # print 'Work u today:', work_u_today,initialU
         # Update objective
         obj = QuadExpr()
-        obj += sum((initialU[i] * (end_time[i] - start_time[i]) - 0.5 * beta[i] * (end_time[i] - start_time[i]) * (
-        end_time[i] - start_time[i]))
+        # obj += sum((initialU[i] * (end_time[i] - start_time[i]) - 0.5 * beta[i] * (end_time[i] - start_time[i]) * (
+        # end_time[i] - start_time[i]))
+        #            for i in non_work_locations)
+        obj += sum((initialU[i] * (end_time[i] - start_time[i]))
                    for i in non_work_locations)
         obj += sum((end_time[i] - start_time[i]) * home_u
                    for i in home_locations)
@@ -533,25 +548,27 @@ machine_start_time = time.time()
 
 ##############################################################
 # SPSA Optimization
-input_parameters = [5,10,1,5,1,3,15]
-# bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+input_parameters = [6,10,1,1.2,1,0,0]
+
+input_parameters = [6,10,1,1.2,1,0.4957,1]
+# # bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
 similarityEvaluationForParameterSet(input_parameters)
 
 # input_parameters = []
 # bounds = []
 # # Add home parameters
-# input_parameters.append(1)
+# input_parameters.append(7)
 # bounds.append([0.1,10])
 # # Add work parameters
-# input_parameters = input_parameters + [30,1]
-# bounds = bounds + [[0.1,50],[0.1,5]]
+# input_parameters = input_parameters + [10,1]
+# bounds = bounds + [[0.1,20],[0.1,20]]
 # # Add nonwork parameters
 # for i in non_work_locations:
 #     input_parameters = input_parameters + [0,1]
-#     bounds = bounds + [[0,20],[0.1,5]]
+#     bounds = bounds + [[0,20],[0.1,20]]
 # similarityEvaluationForParameterSet(input_parameters)
-#
-# # res = minimizeSPSA_Liang(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=30, paired=False)
+
+# res = minimizeSPSA_Liang(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=30, paired=False)
 # res = minimizeSPSA_Customize(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=1000, paired=False)
 # print res
 ##############################################################
@@ -559,32 +576,6 @@ similarityEvaluationForParameterSet(input_parameters)
 # rranges = (slice(0,2,1),slice(0,50,10),slice(0, 2, 1), slice(0, 2, 1),slice(0,10,5),slice(0,20,5),slice(0,2,1),slice(0,2,1),slice(0,10,5),slice(0,10,2),slice(0,2,1),slice(0,2,1))
 # res = optimize.brute(similarityEvaluationForParameterSet,rranges,full_output=True, finish=None)
 ##############################################################
-# MCS (Multilevel Coordinate Search)
-# input_parameters = []
-# upper_bounds = []
-# lower_bounds = []
-# # Add home parameters
-# input_parameters.append(1)
-# upper_bounds.append(10)
-# lower_bounds.append(0.1)
-# # Add work parameters
-# input_parameters = input_parameters + [10,1]
-# upper_bounds = upper_bounds + [20,5]
-# lower_bounds = lower_bounds + [0.1,0.1]
-# # Add nonwork parameters
-# for i in non_work_locations:
-#     input_parameters = input_parameters + [5,0.1]
-#     upper_bounds = upper_bounds + [20, 5]
-#     lower_bounds = lower_bounds + [0, 0.1]
-#
-# startPoint = np.array(input_parameters, np.float)
-# u = np.array(upper_bounds, np.float)
-# v = np.array(upper_bounds, np.float)
-#
-# optimi = MCS(function=similarityEvaluationForParameterSet, criterion=criterion.OrComposition(criterion.MonotonyCriterion(0.00001),
-#                                                                           criterion.IterationCriterion(10000)),
-#              x0=startPoint, u=u, v=v)
-
 machine_elapsed_time = time.time() - machine_start_time
 print machine_elapsed_time
 
