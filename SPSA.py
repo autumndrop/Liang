@@ -350,6 +350,93 @@ def findStepSize(grad, y, x, ak, **fkwargs):
         ak = 0.5 * ak
         return findStepSize(grad, y, x, ak, **fkwargs)
 
+def minimizeSPSA_Customize(func, x0, args=(), bounds=None, niter=100, paired=True,
+                 a=1.0, c=1.0,
+                 disp=False, callback=None):
+    """
+    Minimization of an objective function by a simultaneous perturbation
+    stochastic approximation algorithm.
+
+    Parameters
+    ----------
+    func: callable
+        objective function to be minimized
+    x0: array-like
+        starting point
+    args: tuple
+        extra arguments to be supplied to func
+    bounds: array-like
+        bounds on the variables
+    scaling: array-like
+        scaling by which to multiply step size and tolerances along different dimensions
+    niter: int
+        maximum number of iterations of the algorithm
+    paired: boolean
+        calculate gradient for same random seeds
+    a: float
+       algorithm scaling parameter for step size
+    c: float
+       algorithm scaling parameter for evaluation step size
+    disp: boolean
+        whether to output status updates during the optimization
+    callback: callable
+        called after each iteration, as callback(xk), where xk is the current parameter vector.
+
+    Returns
+    -------
+    scipy.optimize.OptimizeResult object
+    """
+    A = 0.01 * niter
+    alpha = 0.602
+    gamma = 0.101
+
+    if bounds is None:
+        project = lambda x: x
+    else:
+        bounds = np.asarray(bounds)
+        project = lambda x: np.clip(x, bounds[:, 0], bounds[:, 1])
+
+    if args is not None:
+        # freeze function arguments
+        def funcf(x, **kwargs):
+            return func(x, *args, **kwargs)
+
+    N = len(x0)
+    x = x0
+    xbest = x
+    ybest = func(x)
+    for k in range(niter):
+        print k, '/', niter, ':', ybest
+        ak = a / (k + 1.0 + A) ** alpha
+        ck = c / (k + 1.0) ** gamma
+        delta = np.random.choice([-1, 1], size=N)
+        fkwargs = dict()
+        if paired:
+            fkwargs['seed'] = np.random.randint(0, np.iinfo(np.uint32).max)
+        if bounds is None:
+            grad = (funcf(x + ck * delta, **fkwargs) - funcf(x - ck * delta, **fkwargs)) / (2 * ck * delta)
+        else:
+            # ensure evaluation points are feasible
+            xplus = project(x + ck * delta)
+            xminus = project(x - ck * delta)
+            yplus = funcf(xplus, **fkwargs)
+            yminus = funcf(xminus, **fkwargs)
+            grad = (yplus - yminus) / (xplus - xminus)
+            if yplus < ybest:
+                xbest = xplus
+                ybeset = yplus
+            if yminus < ybest:
+                xbest = xminus
+                ybest = yminus
+        x = project(x - ak * grad)
+        # print 100 status updates if disp=True
+        if disp and (k % (niter // 100)) == 0:
+            print(x)
+        if callback is not None:
+            callback(x)
+    message = 'terminated after reaching max number of iterations'
+    return OptimizeResult(fun=funcf(x), x=x, nit=niter, nfev=2 * niter, message=message, success=True)
+
 def minimizeSPSA_Liang(func, x0, args=(), bounds=None, niter=100, paired=True,
                        a=1.0, c=1.0,
                        disp=False, callback=None):

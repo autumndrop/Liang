@@ -7,12 +7,11 @@ import multiprocessing
 from datetime import datetime, timedelta, date
 from scipy.stats import gaussian_kde
 import numpy as np
-# from noisyopt import minimizeCompass, minimizeSPSA_Liang
-from SPSA import minimizeSPSA_Liang
 from gurobipy import *
 import time
 from scipy.optimize import minimize,differential_evolution
 from scipy import optimize
+from scikits.optimization import *
 import DataProcessingFunctions_Android
 reload(DataProcessingFunctions_Android)
 
@@ -36,6 +35,8 @@ parent_path = 'D:/Projects/Liang Tang/Travel Pattern Prediction'
 code_path = parent_path + '/Python_code/venv/Scripts/'
 sys.path.append(code_path)
 import DataProcessingFunctions_Android
+from SPSA import minimizeSPSA_Liang,minimizeSPSA_Customize
+from MCS import MCS
 
 def findWorkStartTime(g):
     g = g.reset_index(drop=True)
@@ -121,6 +122,9 @@ def convertGurobiSolutionToDaySeq(node, start_time, end_time):
             node_ID = work_ID
         duration_temp = end_time_visited[index] - start_time_visited[index]
         n1 = round(duration_temp * 1.0 / dailyPatternInterval)
+        n1 = int(n1)
+        if n1 == 0:
+            n1 = 1
         for i in range(int(n1)):
             predict_day_seq.append(node_ID)
     return predict_day_seq
@@ -132,13 +136,13 @@ def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
         return initialU[ID] + deltaU[ID]
 
 test_path = parent_path + '/App_data/test/'
-# test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
+test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
 # test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
-test_file = parent_path + '/App_data/test/95d25557-f49b-40b0-ba50-b340ef1804f7_trips.csv'
+# test_file = parent_path + '/App_data/test/95d25557-f49b-40b0-ba50-b340ef1804f7_trips.csv'
 fileID = os.path.basename(test_file).split('_')[0]
 print fileID
 seq_file = test_path + fileID + '_daySequence.csv'
-trip_file = test_path + fileID + '_trips.csv'   
+trip_file = test_path + fileID + '_trips.csv'
 seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
 seq1 = seq[1:]
 
@@ -261,7 +265,9 @@ home_locations = range(100, 100+max_home_visits)
 work_locations = range(200,200+max_work_visits)
 work_locations_other = [i for i in work_locations if i != 200]
 non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
+non_home_locations = work_locations + non_work_locations
 print 'non-work locations:',non_work_locations
+print 'non_home locations:', non_home_locations
 locations = home_locations + work_locations + non_work_locations
 penalty_locations = [work_locations[0]] + non_work_locations
 
@@ -410,6 +416,7 @@ def similarityEvaluationForParameterSet(input_parameters):
         (link[i] == 0
         for i in links_home1),"start_location3")
 
+
     # Home location sequence
     if len(home_locations) > 2:
         m.addConstrs(
@@ -423,6 +430,11 @@ def similarityEvaluationForParameterSet(input_parameters):
     m.addConstrs(
         (link.sum(i,'*') <=node[i]
         for i in locations),"outflow")
+
+    # Add constraint: follow conservation, for activities other than home, inflow = outflow
+    m.addConstrs(
+        (link.sum(i, '*') == link.sum('*',i)
+         for i in non_home_locations), "in out flow balance")
 
     # Add constraint: it's a route instead of a circle
     m.addConstr(
@@ -508,6 +520,7 @@ def similarityEvaluationForParameterSet(input_parameters):
         m.setObjective(obj, GRB.MAXIMIZE)
         m.optimize()
         predict_day_seq = convertGurobiSolutionToDaySeq(node, start_time, end_time)
+        print predict_day_seq
         observed_day_seq = daySeqRemoveTravel(seq_train[current_day])
         # print 'predicted activity set:',set(predict_day_seq),'observed activity set:',set(observed_day_seq)
         similarity_score_today = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq, observed_day_seq)
@@ -520,29 +533,57 @@ machine_start_time = time.time()
 
 ##############################################################
 # SPSA Optimization
-# input_parameters = [1,100,1,0,1,0,1,0,1,0,1,0,1]
+input_parameters = [5,10,1,5,1,3,15]
 # bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+similarityEvaluationForParameterSet(input_parameters)
+
+# input_parameters = []
+# bounds = []
+# # Add home parameters
+# input_parameters.append(1)
+# bounds.append([0.1,10])
+# # Add work parameters
+# input_parameters = input_parameters + [30,1]
+# bounds = bounds + [[0.1,50],[0.1,5]]
+# # Add nonwork parameters
+# for i in non_work_locations:
+#     input_parameters = input_parameters + [0,1]
+#     bounds = bounds + [[0,20],[0.1,5]]
 # similarityEvaluationForParameterSet(input_parameters)
-
-input_parameters = []
-bounds = []
-# Add home parameters
-input_parameters.append(1)
-bounds.append([0,10])
-# Add work parameters
-input_parameters = input_parameters + [30,1]
-bounds = bounds + [[0,50],[0,5]]
-# Add nonwork parameters
-for i in non_work_locations:
-    input_parameters = input_parameters + [0,0]
-    bounds = bounds + [[0,20],[0,5]]
-
-res = minimizeSPSA_Liang(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=30, paired=False)
-print res
+#
+# # res = minimizeSPSA_Liang(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=30, paired=False)
+# res = minimizeSPSA_Customize(similarityEvaluationForParameterSet, bounds=bounds, x0=input_parameters, niter=1000, paired=False)
+# print res
 ##############################################################
 # Brute optimization
 # rranges = (slice(0,2,1),slice(0,50,10),slice(0, 2, 1), slice(0, 2, 1),slice(0,10,5),slice(0,20,5),slice(0,2,1),slice(0,2,1),slice(0,10,5),slice(0,10,2),slice(0,2,1),slice(0,2,1))
 # res = optimize.brute(similarityEvaluationForParameterSet,rranges,full_output=True, finish=None)
+##############################################################
+# MCS (Multilevel Coordinate Search)
+# input_parameters = []
+# upper_bounds = []
+# lower_bounds = []
+# # Add home parameters
+# input_parameters.append(1)
+# upper_bounds.append(10)
+# lower_bounds.append(0.1)
+# # Add work parameters
+# input_parameters = input_parameters + [10,1]
+# upper_bounds = upper_bounds + [20,5]
+# lower_bounds = lower_bounds + [0.1,0.1]
+# # Add nonwork parameters
+# for i in non_work_locations:
+#     input_parameters = input_parameters + [5,0.1]
+#     upper_bounds = upper_bounds + [20, 5]
+#     lower_bounds = lower_bounds + [0, 0.1]
+#
+# startPoint = np.array(input_parameters, np.float)
+# u = np.array(upper_bounds, np.float)
+# v = np.array(upper_bounds, np.float)
+#
+# optimi = MCS(function=similarityEvaluationForParameterSet, criterion=criterion.OrComposition(criterion.MonotonyCriterion(0.00001),
+#                                                                           criterion.IterationCriterion(10000)),
+#              x0=startPoint, u=u, v=v)
 
 machine_elapsed_time = time.time() - machine_start_time
 print machine_elapsed_time
