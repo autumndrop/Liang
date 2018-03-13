@@ -340,15 +340,20 @@ def minimizeSPSA(func, x0, args=(), bounds=None, niter=100, paired=True,
     return OptimizeResult(fun=funcf(x), x=x, nit=niter, nfev=2 * niter, message=message, success=True)
 
 
-def findStepSize(grad, y, x, ak, **fkwargs):
+def findStepSize(grad, y, x, ak,bounds,func):
+    if bounds is None:
+        project = lambda x: x
+    else:
+        bounds = np.asarray(bounds)
+        project = lambda x: np.clip(x, bounds[:, 0], bounds[:, 1])
     print 'Find step size:'
     xnext = project(x - ak * grad)
-    ynext = funcf(xnext, **kwargs)
+    ynext = func(xnext)
     if ynext < y:
         return (ynext, xnext)
     else:
         ak = 0.5 * ak
-        return findStepSize(grad, y, x, ak, **fkwargs)
+        return findStepSize(grad, y, x, ak, func)
 
 def minimizeSPSA_Customize(func, x0, args=(), bounds=None, niter=100, paired=True,
                  a=1.0, c=1.0,
@@ -513,13 +518,13 @@ def minimizeSPSA_Liang(func, x0, args=(), bounds=None, niter=100, paired=True,
             yplus = funcf(xplus, **fkwargs)
             if yplus < y:
                 grad = (yplus - y) / (xplus - x)
-                (y, x) = findStepSize(grad, y,x,ak,**fkwargs)
+                (y, x) = findStepSize(grad, y,x,ak,bounds,func)
             else:
                 xminus = project(x - ck * delta)
                 yminus = funcf(xminus, **fkwargs)
                 if yminus < y:
                     grad = (y - yminus) / (x - xminus)
-                    (y, x) = findStepSize(grad, y, x, ak, **fkwargs)
+                    (y, x) = findStepSize(grad, y, x, ak,bounds,func)
         # print 100 status updates if disp=True
         if disp and (k % (niter // 100)) == 0:
             print(x)
