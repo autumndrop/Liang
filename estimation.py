@@ -135,16 +135,44 @@ def updateInitialUtility(ID, initialU,previous_observed_seq, deltaU):
     else:
         return initialU[ID] + deltaU[ID]
 
+def intervalAccuracy(seq_train, interval, ID):
+    current_distance = 1
+    correct_days= 0
+    for i in range(len(seq_train)):
+        if current_distance == interval and ID in seq_train[i]:
+            correct_days += 1
+        elif current_distance != interval and ID not in seq_train[i]:
+            correct_days += 1
+        # else:
+            # print seq_train.index.values[i]
+        if ID in seq_train[i]:
+            current_distance = 0
+        current_distance += 1
+    # print 'ID:',ID, 'interval:',interval,'correct days:',correct_days,'/',len(seq_train)
+    return correct_days
+
+def weekdayAccuracy(seq,nonwork_days_boolean,ID ):
+    correct_days = 0
+    for i in seq.index.values:
+        weekday = i.weekday()
+        if nonwork_days_boolean[(ID,weekday)] == 0 and ID not in seq[i]:
+            correct_days += 1
+        elif nonwork_days_boolean[(ID,weekday)] == 1 and ID in seq[i]:
+            correct_days += 1
+    return correct_days
+
+
 test_path = parent_path + '/App_data/test/'
 # test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
 # test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
-test_file = parent_path + '/App_data/test/95d25557-f49b-40b0-ba50-b340ef1804f7_trips.csv'
+test_file = parent_path + '/App_data/test/3f81bff9-2613-4118-8606-450a6a568d95_trips.csv'
 fileID = os.path.basename(test_file).split('_')[0]
 print fileID
 seq_file = test_path + fileID + '_daySequence.csv'
 trip_file = test_path + fileID + '_trips.csv'
 seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
 seq1 = seq[1:]
+
 
 seq_df = seq.to_frame('seq')
 seq_df['weekday'] = None
@@ -243,31 +271,6 @@ for i in range(len(seq_train)):
 print 'Nonwork activity interval:', nonwork_interval_dict
 
 
-def intervalAccuracy(seq_train, interval, ID):
-    current_distance = 1
-    correct_days= 0
-    for i in range(len(seq_train)):
-        if current_distance == interval and ID in seq_train[i]:
-            correct_days += 1
-        elif current_distance != interval and ID not in seq_train[i]:
-            correct_days += 1
-        # else:
-            # print seq_train.index.values[i]
-        if ID in seq_train[i]:
-            current_distance = 0
-        current_distance += 1
-    print 'ID:',ID, 'interval:',interval,'correct days:',correct_days,'/',len(seq_train)
-    return correct_days
-
-def weekdayAccuracy(seq,nonwork_days_boolean,ID ):
-    correct_days = 0
-    for i in seq.index.values:
-        weekday = i.weekday()
-        if nonwork_days_boolean[(ID,weekday)] == 0 and ID not in seq[i]:
-            correct_days += 1
-        elif nonwork_days_boolean[(ID,weekday)] == 1 and ID in seq[i]:
-            correct_days += 1
-    return correct_days
 
 bestInterval = {}
 bestAccuracy = {}
@@ -406,7 +409,6 @@ travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
 dict_duration = {}
 for ID in dict_duration_raw:
     dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID],MIN_DURATION,MAX_DURATION)
-
 print 'Duration of non-work activities:',dict_duration
 ##############################################################
 # 8. Generate the initial parameter vector
