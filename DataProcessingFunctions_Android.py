@@ -1474,7 +1474,8 @@ def readTripsFromCSV(name):
     tripDF = pd.read_csv(name, index_col=0)
     # Need to convert the following String columns:
     # duration_O, duration_D, start_time, end_time, trip_time
-    tripDF['duration_O_str'] = tripDF['duration_O']
+    if 'duration_O' in tripDF.columns.values:
+        tripDF['duration_O_str'] = tripDF['duration_O']
     tripDF['duration_D_str'] = tripDF['duration_D']
     tripDF['trip_time_str'] = tripDF['trip_time']
     tripDF['start_time_str'] = tripDF['start_time']
@@ -1485,8 +1486,9 @@ def readTripsFromCSV(name):
     tripDF.loc[0, 'trip_time'] = strToTimeDelta(tripDF.loc[0, 'trip_time_str'])
     for i in tripDF.index.values:
         # print tripDF.loc[i,'trip_time_upperbound']
-        if not pd.isnull(tripDF.loc[i, 'duration_O']):
-            tripDF.loc[i, 'duration_O'] = strToTimeDelta(tripDF.loc[i, 'duration_O_str'])
+        if 'duration_O' in tripDF.columns.values:
+            if not pd.isnull(tripDF.loc[i, 'duration_O']):
+                tripDF.loc[i, 'duration_O'] = strToTimeDelta(tripDF.loc[i, 'duration_O_str'])
         if not pd.isnull(tripDF.loc[i, 'duration_D']):
             tripDF.loc[i, 'duration_D'] = strToTimeDelta(tripDF.loc[i, 'duration_D_str'])
         if not pd.isnull(tripDF.loc[i, 'trip_time']):
@@ -1499,7 +1501,8 @@ def readTripsFromCSV(name):
         #     tripDF.loc[i, 'duration_D_upperbound'] = strToTimeDelta(tripDF.loc[i, 'duration_D_upperbound_str'])
         # if not pd.isnull(tripDF.loc[i, 'trip_time_upperbound']) and tripDF.loc[i, 'trip_time_upperbound'] != '':
         #     tripDF.loc[i, 'trip_time_upperbound'] = strToTimeDelta(tripDF.loc[i, 'trip_time_upperbound_str'])
-    del tripDF['duration_O_str']
+    if 'duration_O' in tripDF.columns.values:
+        del tripDF['duration_O_str']
     del tripDF['duration_D_str']
     del tripDF['trip_time_str']
     del tripDF['start_time_str']

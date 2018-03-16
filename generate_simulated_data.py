@@ -42,12 +42,19 @@ from MCS import MCS
 GENERATE_PATH = 'App_data/Generated_data/'
 GENERATE_SEQ_PATH = 'App_data/Generated_data/daySequence/'
 GENERATE_TRIP_PATH = 'App_data/Generated_data/trips/'
+GENERATE_LOCATION_SEQUENCE = 'App_data/Generated_data/locationSequence/'
+GENERATE_LOCATION_PLOT = 'App_data/Generated_data/locationSequence_plots/'
+
 if not os.path.isdir(GENERATE_PATH):
     os.mkdir(GENERATE_PATH)
 if not os.path.isdir(GENERATE_SEQ_PATH):
     os.mkdir(GENERATE_SEQ_PATH)
 if not os.path.isdir(GENERATE_TRIP_PATH):
     os.mkdir(GENERATE_TRIP_PATH)
+if not os.path.isdir(GENERATE_LOCATION_SEQUENCE):
+    os.mkdir(GENERATE_LOCATION_SEQUENCE)
+if not os.path.isdir(GENERATE_LOCATION_PLOT):
+    os.mkdir(GENERATE_LOCATION_PLOT)
 
 
 def findWorkStartTime(g):
@@ -187,6 +194,7 @@ def convertNode(ID,home_locations,home_ID,work_locations,work_ID):
 fileID = 1
 trip_file = GENERATE_TRIP_PATH + str(fileID) + '_trips.csv'
 seq_file = GENERATE_SEQ_PATH + str(fileID) + '_daySequence.csv'
+locSeq_file = GENERATE_LOCATION_SEQUENCE + str(fileID) + '_loactionSequence.csv'
 # Location purpose
 home_ID = 0
 work_ID = 1
@@ -490,3 +498,6 @@ df_seq = pd.DataFrame(dict_data.items(),columns = ['date','seq'])
 df_seq = df_seq.sort_values('date')
 df_seq = df_seq.reset_index(drop=True)
 df_seq.to_csv(seq_file,header=False)
+locationTimeInterval = 5
+DataProcessingFunctions_Android.locationSequenceCreate(trip_file, locSeq_file, locationTimeInterval, START_HOUR)
+DataProcessingFunctions_Android.plotASingleFile(locSeq_file,GENERATE_LOCATION_PLOT)
