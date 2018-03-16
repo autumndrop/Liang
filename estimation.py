@@ -139,12 +139,13 @@ def intervalAccuracy(seq_train, interval, ID):
     current_distance = 1
     correct_days= 0
     for i in range(len(seq_train)):
-        if current_distance == interval and ID in seq_train[i]:
+        # print seq_train[i]
+        if current_distance >= interval and ID in seq_train[i]:
             correct_days += 1
-        elif current_distance != interval and ID not in seq_train[i]:
+        elif current_distance < interval and ID not in seq_train[i]:
             correct_days += 1
         # else:
-            # print seq_train.index.values[i]
+        #     print seq_train.index.values[i]
         if ID in seq_train[i]:
             current_distance = 0
         current_distance += 1
@@ -161,255 +162,275 @@ def weekdayAccuracy(seq,nonwork_days_boolean,ID ):
             correct_days += 1
     return correct_days
 
+#
+# test_path = parent_path + '/App_data/test/'
+# # test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
+# # test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
+# test_file = parent_path + '/App_data/test/3f81bff9-2613-4118-8606-450a6a568d95_trips.csv'
+# fileID = os.path.basename(test_file).split('_')[0]
+# print fileID
+# seq_file = test_path + fileID + '_daySequence.csv'
+# trip_file = test_path + fileID + '_trips.csv'
+# seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
+# seq1 = seq[1:]
 
-test_path = parent_path + '/App_data/test/'
-# test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
-# test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
-test_file = parent_path + '/App_data/test/3f81bff9-2613-4118-8606-450a6a568d95_trips.csv'
-fileID = os.path.basename(test_file).split('_')[0]
-print fileID
-seq_file = test_path + fileID + '_daySequence.csv'
-trip_file = test_path + fileID + '_trips.csv'
-seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
-seq1 = seq[1:]
+tripList = glob.glob('App_data/Processed_Data/GPS_trips_processed/*.csv')
+DAYSEQ_PATH = 'App_data/Processed_Data/GPS_daySequence_processed/'
+SUMMARY_PATH = 'App_data/Processed_Data/GPS_daySequence_processed_summary/'
+if not os.path.isdir(SUMMARY_PATH):
+    os.mkdir(SUMMARY_PATH)
+
+def evaluatePersonFile(trip_file):
+    fileID = os.path.basename(trip_file).split('_')[0]
+    print fileID
+    seq_file = DAYSEQ_PATH + fileID + '_daySequence.csv'
+    seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
+    seq1 = seq[1:]
+    observed_day_length = len(seq1)
+    N_DAYS = 60
+    if N_DAYS > observed_day_length:
+        N_DAYS = int(0.8 * observed_day_length)
+    print 'Training data length:', N_DAYS
 
 
-seq_df = seq.to_frame('seq')
-seq_df['weekday'] = None
-seq_df['locationSet'] = None
-for i in seq_df.index.values:
-    seq_df.loc[i,'weekday'] = i.weekday()
-    temp_set = set(seq_df.loc[i,'seq'])
-    seq_df.loc[i,'locationSet'] = [x for x in temp_set if x!= -99]
-seq_summary_file = test_path + fileID + '_daySequence_summary.csv'
-seq_df.to_csv(seq_summary_file)
+    seq_df = seq.to_frame('seq')
+    seq_df['weekday'] = None
+    seq_df['locationSet'] = None
+    for i in seq_df.index.values:
+        seq_df.loc[i,'weekday'] = i.weekday()
+        temp_set = set(seq_df.loc[i,'seq'])
+        seq_df.loc[i,'locationSet'] = [x for x in temp_set if x!= -99]
+    seq_summary_file = SUMMARY_PATH + fileID + '_daySequence_summary.csv'
+    seq_df.to_csv(seq_summary_file)
 
-# Seperate data into training set and test set
-N_DAYS = 60
-seq_train = seq1[0:60]
-seq_test = seq1[60:]
-end_date_train = seq1.index.values[59]
-start_date_train = seq1.index.values[0]
+    # Seperate data into training set and test set
+    seq_train = seq1[0:N_DAYS]
+    seq_test = seq1[N_DAYS:]
+    end_date_train = seq1.index.values[N_DAYS-1]
+    start_date_train = seq1.index.values[0]
 
-#############################################################
-# Location purpose
-home_ID = 0
-work_ID = 1
-##############################################################
-# 6. Determine number of locations and parameters to calibrate
-# Add all the locations visited and frequency into dictionary
-location_dict = {}
-work_days_dict = {}
-for i in range(7):
-    work_days_dict[i] = []
-for i in seq_train.index.values:
-    weekday = i.weekday()
-    day_seq = seq_train[i]
-    seq_set = set(day_seq)
-    if work_ID in seq_set:
-        work_days_dict[weekday].append(1)
-    else:
-        work_days_dict[weekday].append(0)
-    for loc in seq_set:
-        if loc != -99:
-            if loc in location_dict:
-                location_dict[loc] += 1
-            else:
-                location_dict[loc] = 1
-
-work_days_boolean = {}
-for i in work_days_dict:
-    work_days_boolean[i] = round( sum(work_days_dict[i]) * 1.0 / len(work_days_dict[i]))
-print 'Work days:',work_days_boolean
-
-# Only keep the locations been visited certain times
-location_frequent_dict = {}
-NUMBER_VISIT_BUFFER = 2
-for loc in location_dict:
-    if location_dict[loc] > NUMBER_VISIT_BUFFER:
-        location_frequent_dict[loc] = location_dict[loc]
-print 'Frequent visited locations:',location_frequent_dict
-
-# Determine non-work activity pattern
-# Pattern based on day of week
-non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
-nonwork_days_dict = {}
-for ID in non_work_locations:
-    for day_of_week in range(7):
-        nonwork_days_dict[(ID,day_of_week)] = []
-
-for i in seq_train.index.values:
-    weekday = i.weekday()
-    for ID in non_work_locations:
-        if ID in seq_train[i]:
-            nonwork_days_dict[(ID,weekday)].append(1)
+    #############################################################
+    # Location purpose
+    home_ID = 0
+    work_ID = 1
+    ##############################################################
+    # 6. Determine number of locations and parameters to calibrate
+    # Add all the locations visited and frequency into dictionary
+    location_dict = {}
+    work_days_dict = {}
+    for i in range(7):
+        work_days_dict[i] = []
+    for i in seq_train.index.values:
+        weekday = i.weekday()
+        day_seq = seq_train[i]
+        seq_set = set(day_seq)
+        if work_ID in seq_set:
+            work_days_dict[weekday].append(1)
         else:
-            nonwork_days_dict[(ID, weekday)].append(0)
+            work_days_dict[weekday].append(0)
+        for loc in seq_set:
+            if loc != -99:
+                if loc in location_dict:
+                    location_dict[loc] += 1
+                else:
+                    location_dict[loc] = 1
 
-nonwork_days_boolean = {}
-for ID in non_work_locations:
-    for day_of_week in range(7):
-        nonwork_days_boolean[(ID,day_of_week)] = round(sum(nonwork_days_dict[(ID,day_of_week)]) * 1.0 / len(nonwork_days_dict[(ID,day_of_week)]))
-print 'Nonwork locations:',nonwork_days_boolean
+    # work_days_boolean = {}
+    # for i in work_days_dict:
+    #     work_days_boolean[i] = round( sum(work_days_dict[i]) * 1.0 / len(work_days_dict[i]))
+    # print 'Work days:',work_days_boolean
 
-# Pattern based on interval
-nonwork_interval_dict = {}
-nonwork_temp_index = {}
-for ID in non_work_locations:
-    nonwork_interval_dict[ID] = []
-    nonwork_temp_index[ID] = -1
+    # Only keep the locations been visited certain times
+    location_frequent_dict = {}
+    NUMBER_VISIT_BUFFER = 2
+    for loc in location_dict:
+        if location_dict[loc] > NUMBER_VISIT_BUFFER:
+            location_frequent_dict[loc] = location_dict[loc]
+    print 'Frequent visited locations:',location_frequent_dict
 
-for i in range(len(seq_train)):
-    seq_i = seq_train[i]
+    # Determine non-work activity pattern
+    # Pattern based on day of week
+    non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
+    nonwork_days_dict = {}
     for ID in non_work_locations:
-        if ID in seq_i:
-            if nonwork_temp_index[ID] == -1:
-                nonwork_temp_index[ID] = i
+        for day_of_week in range(7):
+            nonwork_days_dict[(ID,day_of_week)] = []
+
+    for i in seq_train.index.values:
+        weekday = i.weekday()
+        for ID in non_work_locations:
+            if ID in seq_train[i]:
+                nonwork_days_dict[(ID,weekday)].append(1)
             else:
-                nonwork_interval_dict[ID].append(i-nonwork_temp_index[ID])
-                nonwork_temp_index[ID] = i
-print 'Nonwork activity interval:', nonwork_interval_dict
+                nonwork_days_dict[(ID, weekday)].append(0)
 
+    nonwork_days_boolean = {}
+    for ID in non_work_locations:
+        for day_of_week in range(7):
+            nonwork_days_boolean[(ID,day_of_week)] = round(sum(nonwork_days_dict[(ID,day_of_week)]) * 1.0 / len(nonwork_days_dict[(ID,day_of_week)]))
+    # print 'Nonwork locations:',nonwork_days_boolean
+    # print 'Nonwork locations visited on weekdays:',[x for x in nonwork_days_boolean if nonwork_days_boolean[x] > 0]
 
+    # Pattern based on interval
+    nonwork_interval_dict = {}
+    nonwork_temp_index = {}
+    for ID in non_work_locations:
+        nonwork_interval_dict[ID] = []
+        nonwork_temp_index[ID] = -1
 
-bestInterval = {}
-bestAccuracy = {}
-non_work_method = {}
-'''
-non_work_method represents how to predict if an activity is taken in a day
-1: weekday method. If taking the activity is based on the day of week. For location 2, if nonwork_days_boolean(2, weekday) is 1, take the activity, otherwise not taking
-2: frequency method. Taking the activity based on interval. The interval is stored in bestInterval[ID]
-'''
-
-
-for ID in non_work_locations:
-    ID_common = DataProcessingFunctions_Android.most_common(nonwork_interval_dict[ID])
-    start_index = 0
     for i in range(len(seq_train)):
         seq_i = seq_train[i]
-        if ID in seq_i:
-            start_index = i + 1
-            break
-    print ID,'start_index:', seq_train.index.values[start_index]
-    bestInterval[ID] = 0
-    bestAccuracy[ID] = 0
-    for interval in set(nonwork_interval_dict[ID]):
-        if interval >= ID_common:
-            currentAccuracy = intervalAccuracy(seq_train[start_index:], interval, ID)
-            if currentAccuracy > bestAccuracy[ID]:
-                bestAccuracy[ID]  = currentAccuracy
-                bestInterval[ID] = interval
+        for ID in non_work_locations:
+            if ID in seq_i:
+                if nonwork_temp_index[ID] == -1:
+                    nonwork_temp_index[ID] = i
+                else:
+                    nonwork_interval_dict[ID].append(i-nonwork_temp_index[ID])
+                    nonwork_temp_index[ID] = i
+    # print 'Nonwork activity interval:', nonwork_interval_dict
 
-    day_of_week_accuracy = weekdayAccuracy(seq_train[start_index:],nonwork_days_boolean,ID )
-    print 'bestInterval:',bestInterval[ID],'bestAccuracy:',bestAccuracy[ID],'Day of week accuracy:',day_of_week_accuracy
-    if day_of_week_accuracy >= bestAccuracy[ID]-1:
-        non_work_method[ID] = 1
-    else:
-        non_work_method[ID] = 2
 
-print 'Nonwork method',non_work_method
-##############################################################
-# 7. Getting information from training data
-# Getting the observed travel time and preferred arrival time
-# Read trip file
-df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
 
-# Load all the observed travel time and departure times in the trip file (only the training days)
-dict_T = {}
-dict_arrivalT = {}
-dict_endT = {}
-dict_duration_raw = {}
+    bestInterval = {}
+    bestAccuracy = {}
+    non_work_method = {}
+    '''
+    non_work_method represents how to predict if an activity is taken in a day
+    1: weekday method. If taking the activity is based on the day of week. For location 2, if nonwork_days_boolean(2, weekday) is 1, take the activity, otherwise not taking
+    2: frequency method. Taking the activity based on interval. The interval is stored in bestInterval[ID]
+    '''
 
-df_trip['date'] = None
-for i in df_trip.index.values:
-    df_trip.loc[i,'date'] = df_trip.loc[i,'end_time'].to_datetime().date()
 
-df_trip_train = df_trip[df_trip['date'] <= end_date_train]
+    for ID in non_work_locations:
+        ID_common = DataProcessingFunctions_Android.most_common(nonwork_interval_dict[ID])
+        start_index = 0
+        for i in range(len(seq_train)):
+            seq_i = seq_train[i]
+            if ID in seq_i:
+                start_index = i + 1
+                break
+        # print ID,'start_index:', seq_train.index.values[start_index]
+        bestInterval[ID] = 0
+        bestAccuracy[ID] = 0
+        for interval in set(nonwork_interval_dict[ID]):
+            if interval >= ID_common:
+                currentAccuracy = intervalAccuracy(seq_train[start_index:], interval, ID)
+                if currentAccuracy > bestAccuracy[ID]:
+                    bestAccuracy[ID]  = currentAccuracy
+                    bestInterval[ID] = interval
 
-for i in df_trip.index.values:
-    end_date = df_trip.loc[i,'date']
-    if end_date > end_date_train:
-        break
-    O_ID = df_trip.loc[i,'locationID_O']
-    D_ID = df_trip.loc[i,'locationID_D']
-    OD_pair = (O_ID, D_ID)
-    travel_time = df_trip.loc[i,'trip_time'].seconds/60.0
-    duration = df_trip.loc[i,'duration_D'].seconds/60.0
-    # Update travel time dictionary
-    if OD_pair not in dict_T:
-        dict_T[OD_pair] = [travel_time]
-    else:
-        dict_T[OD_pair].append(travel_time)
-    if D_ID in location_frequent_dict:
-        if D_ID not in dict_duration_raw:
-            dict_duration_raw[D_ID] = [duration]
+        day_of_week_accuracy = weekdayAccuracy(seq_train[start_index:],nonwork_days_boolean,ID )
+        print ID, 'bestInterval:',bestInterval[ID],'bestAccuracy:',bestAccuracy[ID],'Day of week accuracy:',day_of_week_accuracy, 'Total days:',len(seq_train[start_index:])
+        if (day_of_week_accuracy >= bestAccuracy[ID]-2):
+            non_work_method[ID] = 1
         else:
-            dict_duration_raw[D_ID].append(duration)
-    # Update preferred arrival time list
-    arrival_time = df_trip.loc[i,'end_time']
-    arrival_time_t = arrival_time.hour * 60 + arrival_time.minute + arrival_time.second/60.0
-    if D_ID not in dict_arrivalT:
-        dict_arrivalT[D_ID] = [arrival_time_t]
-    else:
-        dict_arrivalT[D_ID].append(arrival_time_t)
+            non_work_method[ID] = 2
 
-dict_arrivalT[work_ID] = []
-dict_endT[work_ID] = []
-df_trip_work_start = df_trip_train[df_trip_train['locationID_D']== work_ID]
-df_start_time = df_trip_work_start.groupby(['date']).apply(findWorkStartTime)
-dict_arrivalT[work_ID] = list(df_start_time['workStartTime'])
-
-df_trip_work_end = df_trip_train[df_trip_train['locationID_O']== work_ID]
-df_end_time = df_trip_work_end.groupby(['date']).apply(findWorkEndTime)
-dict_endT[work_ID] = list(df_end_time['workEndTime'])
-
-df_home = df_trip_train[df_trip_train['locationID_O']== home_ID]
-df_home_number = df_home.groupby(['date']).apply(findHomeWorkVistTimes)
-max_home_visits = df_home_number['visitTimes'].max()+1
-
-df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
-df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
-max_work_visits = df_work_number['visitTimes'].max()
-
-# Avg day distance for frequent locations
-dict_frequent_day_distance = {}
-for ID in location_frequent_dict:
-    dict_frequent_day_distance[ID] = N_DAYS * 1.0/location_frequent_dict[ID]
-#
-##############################################################
-# Model set up
-home_locations = range(100, 100+max_home_visits)
-work_locations = range(200,200+max_work_visits)
-work_locations_other = [i for i in work_locations if i != 200]
-non_home_locations = work_locations + non_work_locations
-print 'non-work locations:',non_work_locations
-print 'non_home locations:', non_home_locations
-locations = home_locations + work_locations + non_work_locations
-penalty_locations = [work_locations[0]] + non_work_locations
-
-T = 1440
-M = 2000
-
-# Capture observed arrival departure time information
-work_end_time = findMaxProKernel(dict_endT[work_ID],MIN_STARTTIME,MAX_STARTTIME)
-preferred_arrival = {}
-for i in dict_arrivalT:
-    preferred_arrival[i] = findMaxProKernel(dict_arrivalT[i],MIN_STARTTIME,MAX_STARTTIME)
-preferred_arrival = replaceHomeWorkLocations(preferred_arrival,home_ID,home_locations)
-preferred_arrival = replaceHomeWorkLocations(preferred_arrival,work_ID,work_locations)
-
-travel_time_dict = {}
-for OD in dict_T:
-    if OD[0] in location_frequent_dict and OD[1] in location_frequent_dict:
-        travel_time_dict[OD] = sum(dict_T[OD]) / len(dict_T[OD])
-
-travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
-travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
-
-dict_duration = {}
-for ID in dict_duration_raw:
-    dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID],MIN_DURATION,MAX_DURATION)
-print 'Duration of non-work activities:',dict_duration
+    print 'Nonwork locations visited on weekdays:', [x for x in nonwork_days_boolean if nonwork_days_boolean[x] > 0]
+    # print 'Nonwork method',non_work_method
+    print 'Nonwork locations use method 2:',[x for x in non_work_method if non_work_method[x] == 2]
+    ##############################################################
+    # # 7. Getting information from training data
+    # # Getting the observed travel time and preferred arrival time
+    # # Read trip file
+    # df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
+    #
+    # # Load all the observed travel time and departure times in the trip file (only the training days)
+    # dict_T = {}
+    # dict_arrivalT = {}
+    # dict_endT = {}
+    # dict_duration_raw = {}
+    #
+    # df_trip['date'] = None
+    # for i in df_trip.index.values:
+    #     df_trip.loc[i,'date'] = df_trip.loc[i,'end_time'].to_datetime().date()
+    #
+    # df_trip_train = df_trip[df_trip['date'] <= end_date_train]
+    #
+    # for i in df_trip.index.values:
+    #     end_date = df_trip.loc[i,'date']
+    #     if end_date > end_date_train:
+    #         break
+    #     O_ID = df_trip.loc[i,'locationID_O']
+    #     D_ID = df_trip.loc[i,'locationID_D']
+    #     OD_pair = (O_ID, D_ID)
+    #     travel_time = df_trip.loc[i,'trip_time'].seconds/60.0
+    #     duration = df_trip.loc[i,'duration_D'].seconds/60.0
+    #     # Update travel time dictionary
+    #     if OD_pair not in dict_T:
+    #         dict_T[OD_pair] = [travel_time]
+    #     else:
+    #         dict_T[OD_pair].append(travel_time)
+    #     if D_ID in location_frequent_dict:
+    #         if D_ID not in dict_duration_raw:
+    #             dict_duration_raw[D_ID] = [duration]
+    #         else:
+    #             dict_duration_raw[D_ID].append(duration)
+    #     # Update preferred arrival time list
+    #     arrival_time = df_trip.loc[i,'end_time']
+    #     arrival_time_t = arrival_time.hour * 60 + arrival_time.minute + arrival_time.second/60.0
+    #     if D_ID not in dict_arrivalT:
+    #         dict_arrivalT[D_ID] = [arrival_time_t]
+    #     else:
+    #         dict_arrivalT[D_ID].append(arrival_time_t)
+    #
+    # dict_arrivalT[work_ID] = []
+    # dict_endT[work_ID] = []
+    # df_trip_work_start = df_trip_train[df_trip_train['locationID_D']== work_ID]
+    # df_start_time = df_trip_work_start.groupby(['date']).apply(findWorkStartTime)
+    # dict_arrivalT[work_ID] = list(df_start_time['workStartTime'])
+    #
+    # df_trip_work_end = df_trip_train[df_trip_train['locationID_O']== work_ID]
+    # df_end_time = df_trip_work_end.groupby(['date']).apply(findWorkEndTime)
+    # dict_endT[work_ID] = list(df_end_time['workEndTime'])
+    #
+    # df_home = df_trip_train[df_trip_train['locationID_O']== home_ID]
+    # df_home_number = df_home.groupby(['date']).apply(findHomeWorkVistTimes)
+    # max_home_visits = df_home_number['visitTimes'].max()+1
+    #
+    # df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
+    # df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
+    # max_work_visits = df_work_number['visitTimes'].max()
+    #
+    # # Avg day distance for frequent locations
+    # dict_frequent_day_distance = {}
+    # for ID in location_frequent_dict:
+    #     dict_frequent_day_distance[ID] = N_DAYS * 1.0/location_frequent_dict[ID]
+    # #
+    # ##############################################################
+    # # Model set up
+    # home_locations = range(100, 100+max_home_visits)
+    # work_locations = range(200,200+max_work_visits)
+    # work_locations_other = [i for i in work_locations if i != 200]
+    # non_home_locations = work_locations + non_work_locations
+    # print 'non-work locations:',non_work_locations
+    # print 'non_home locations:', non_home_locations
+    # locations = home_locations + work_locations + non_work_locations
+    # penalty_locations = [work_locations[0]] + non_work_locations
+    #
+    # T = 1440
+    # M = 2000
+    #
+    # # Capture observed arrival departure time information
+    # work_end_time = findMaxProKernel(dict_endT[work_ID],MIN_STARTTIME,MAX_STARTTIME)
+    # preferred_arrival = {}
+    # for i in dict_arrivalT:
+    #     preferred_arrival[i] = findMaxProKernel(dict_arrivalT[i],MIN_STARTTIME,MAX_STARTTIME)
+    # preferred_arrival = replaceHomeWorkLocations(preferred_arrival,home_ID,home_locations)
+    # preferred_arrival = replaceHomeWorkLocations(preferred_arrival,work_ID,work_locations)
+    #
+    # travel_time_dict = {}
+    # for OD in dict_T:
+    #     if OD[0] in location_frequent_dict and OD[1] in location_frequent_dict:
+    #         travel_time_dict[OD] = sum(dict_T[OD]) / len(dict_T[OD])
+    #
+    # travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
+    # travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
+    #
+    # dict_duration = {}
+    # for ID in dict_duration_raw:
+    #     dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID],MIN_DURATION,MAX_DURATION)
+    # print 'Duration of non-work activities:',dict_duration
 ##############################################################
 # 8. Generate the initial parameter vector
 # Parameter explanation
@@ -622,7 +643,7 @@ def similarityEvaluationForParameterSet(input_parameters):
     observed_day_seq = daySeqRemoveTravel(seq_train[current_day])
     similarity_score = DataProcessingFunctions_Android.sequenceAlignmentBio(predict_day_seq,observed_day_seq)
 
-    for current_index in range(1,60):
+    for current_index in range(1,N_DAYS):
         current_day = seq1.index.values[current_index]
         previous_day = seq1.index.values[current_index - 1]
         # print current_day
@@ -661,6 +682,14 @@ def similarityEvaluationForParameterSet(input_parameters):
 
 machine_start_time = time.time()
 
+Flag_ID = 1
+for trip_file in tripList:
+    print Flag_ID,'/',len(tripList)
+    Flag_ID += 1
+    evaluatePersonFile(trip_file)
+
+# trip_file = 'App_data/Processed_Data/GPS_trips_processed/09a963d1-d7cb-42ed-9825-822e1dec2d57_daySequence.csv'
+# evaluatePersonFile(trip_file)
 ##############################################################
 # SPSA Optimization
 input_parameters = [6,10,1,1.2,1,0,0]
