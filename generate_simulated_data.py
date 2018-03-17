@@ -38,7 +38,7 @@ import DataProcessingFunctions_Android
 from SPSA import minimizeSPSA_Liang,minimizeSPSA_Customize
 from MCS import MCS
 
-
+os.chdir(parent_path)
 GENERATE_PATH = 'App_data/Generated_data/'
 GENERATE_SEQ_PATH = 'App_data/Generated_data/daySequence/'
 GENERATE_TRIP_PATH = 'App_data/Generated_data/trips/'
@@ -438,9 +438,9 @@ def convertGurobiSolutionToDF(df_data,current_df_index,previous_D_startTime, nod
         index2 = sequence[i+1]
         node1 = node_visited[index1]
         node2 = node_visited[index2]
-        time1 = end_time_visited[index1]
+        time1 = round(end_time_visited[index1])
         time1_date = datetime(current_day.year,current_day.month,current_day.day,int(time1/60),int(time1%60))
-        time2 = start_time_visited[index2]
+        time2 = round(start_time_visited[index2])
         time2_date = datetime(current_day.year, current_day.month, current_day.day, int(time2 / 60), int(time2 % 60))
         if previous_D_startTime == -1:
             previous_D_startTime = time2_date
@@ -463,6 +463,7 @@ df_data = pd.DataFrame(columns=['weekday','start_time','end_time','trip_time','d
 current_df_index = 0
 previous_D_startTime = -1
 [df_data,current_df_index,previous_D_startTime] = convertGurobiSolutionToDF(df_data,current_df_index,previous_D_startTime, node,start_time, end_time)
+
 
 for current_index in range(1,N_DAYS):
     previous_day = current_day
