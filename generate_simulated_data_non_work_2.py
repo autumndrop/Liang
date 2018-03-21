@@ -227,7 +227,7 @@ home_u = 8
 work_u = 15
 travel_u = 1
 deltaU = {}
-deltaU[2] = 3
+deltaU[2] = 4
 deltaU[3] = 1
 
 initialU = {}
@@ -259,8 +259,8 @@ penalty_locations = [work_locations[0]] + non_work_locations
 T = 1440
 M = 2000
 
-start_date_train = datetime(2017,6,1)
-N_DAYS = 60
+start_date_train = datetime(2017,5,27)
+N_DAYS = 200
 
 dict_data = {}
 
@@ -445,8 +445,8 @@ def convertGurobiSolutionToDF(df_data,current_df_index,previous_D_startTime, nod
         if previous_D_startTime == -1:
             previous_D_startTime = time2_date
         else:
-            print time1_date
-            print previous_D_startTime
+            # print time1_date
+            # print previous_D_startTime
             df_data.loc[current_df_index-1, 'duration_D'] = time1_date - previous_D_startTime
             previous_D_startTime = time2_date
         triptime = time2_date - time1_date
@@ -472,7 +472,7 @@ for current_index in range(1,N_DAYS):
     work_u_today = work_u * work_days_boolean[current_weekday]
     for ID in non_work_locations:
         initialU[ID] = updateInitialUtility(ID, initialU,dict_data[previous_day], deltaU)
-    print 'initialU:',initialU
+    print current_day,'Weekday:',current_weekday,'initialU:',initialU
     obj = QuadExpr()
     # obj += sum((initialU[i] * (end_time[i] - start_time[i]) - 0.5 * beta[i] * (end_time[i] - start_time[i]) * (
     # end_time[i] - start_time[i]))
@@ -498,7 +498,7 @@ df_data.to_csv(trip_file)
 df_seq = pd.DataFrame(dict_data.items(),columns = ['date','seq'])
 df_seq = df_seq.sort_values('date')
 df_seq = df_seq.reset_index(drop=True)
-df_seq.to_csv(seq_file,header=False)
+df_seq.to_csv(seq_file,header=False,index=False)
 locationTimeInterval = 5
 DataProcessingFunctions_Android.locationSequenceCreate(trip_file, locSeq_file, locationTimeInterval, START_HOUR)
 DataProcessingFunctions_Android.plotASingleFile(locSeq_file,GENERATE_LOCATION_PLOT)

@@ -38,17 +38,37 @@ import DataProcessingFunctions_Android
 from SPSA import minimizeSPSA_Liang,minimizeSPSA_Customize
 from MCS import MCS
 
+os.chdir(parent_path)
+GENERATE_PATH = 'App_data/Generated_data/'
+GENERATE_SEQ_PATH = 'App_data/Generated_data/daySequence/'
+GENERATE_TRIP_PATH = 'App_data/Generated_data/trips/'
+GENERATE_LOCATION_SEQUENCE = 'App_data/Generated_data/locationSequence/'
+GENERATE_LOCATION_PLOT = 'App_data/Generated_data/locationSequence_plots/'
+SUMMARY_PATH = 'App_data/Generated_data/summary/'
+if not os.path.isdir(SUMMARY_PATH):
+    os.mkdir(SUMMARY_PATH)
+
+fileID = 1
+trip_file = GENERATE_TRIP_PATH + str(fileID) + '_trips.csv'
+seq_file = GENERATE_SEQ_PATH + str(fileID) + '_daySequence.csv'
+
 def findWorkStartTime(g):
     g = g.reset_index(drop=True)
     startTime = g.loc[0,'end_time']
     startTimeT = startTime.hour * 60 + startTime.minute + startTime.second/60.0
-    return pd.Series(dict(workStartTime = startTimeT))
+    startTimeT_accurate = -1
+    if g.loc[0,'locationID_O'] == home_ID:
+        startTimeT_accurate = startTimeT
+    return pd.Series(dict(workStartTime = startTimeT, workStartTime_accurate = startTimeT_accurate))
 
 def findWorkEndTime(g):
     g = g.reset_index(drop=True)
     endTime = g.loc[len(g)-1,'start_time']
     endTimeT = endTime.hour * 60 + endTime.minute + endTime.second/60.0
-    return pd.Series(dict(workEndTime = endTimeT))
+    endTimeT_accurate = -1
+    if g.loc[len(g)-1,'locationID_D'] == home_ID:
+        endTimeT_accurate = endTimeT_accurate
+    return pd.Series(dict(workEndTime = endTimeT, workEndTime_accurate = endTimeT_accurate))
 
 def findHomeWorkVistTimes(g):
     return pd.Series(dict(visitTimes = len(g)))
@@ -60,7 +80,7 @@ def max_density(density, startTime,endTime):
     return np.arange(startTime,endTime)[bb]
 
 def findMaxProKernel(x_list,startTime,endTime):
-    if len(x_list) == 1:
+    if len(set(x_list)) == 1:
         return x_list[0]
     density = gaussian_kde(x_list)
     return max_density(density,startTime,endTime)
@@ -162,60 +182,7 @@ def weekdayAccuracy(seq,nonwork_days_boolean,ID ):
             correct_days += 1
     return correct_days
 
-#
-# test_path = parent_path + '/App_data/test/'
-# # test_file = parent_path + '/App_data/test/714d2ea9-ea8c-4b20-8988-c88e80efb86d_trips.csv'
-# # test_file = parent_path + '/App_data/test/1d1d260a-3db9-45d4-8785-120f268a50a2_trips.csv'
-# test_file = parent_path + '/App_data/test/3f81bff9-2613-4118-8606-450a6a568d95_trips.csv'
-# fileID = os.path.basename(test_file).split('_')[0]
-# print fileID
-# seq_file = test_path + fileID + '_daySequence.csv'
-# trip_file = test_path + fileID + '_trips.csv'
-# seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
-# seq1 = seq[1:]
-
-tripList = glob.glob('App_data/Processed_Data/GPS_trips_processed/*.csv')
-DAYSEQ_PATH = 'App_data/Processed_Data/GPS_daySequence_processed/'
-SUMMARY_PATH = 'App_data/Processed_Data/GPS_daySequence_processed_summary/'
-if not os.path.isdir(SUMMARY_PATH):
-    os.mkdir(SUMMARY_PATH)
-
-def evaluatePersonFile(trip_file):
-    fileID = os.path.basename(trip_file).split('_')[0]
-    print fileID
-    seq_file = DAYSEQ_PATH + fileID + '_daySequence.csv'
-    seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
-    seq1 = seq[1:]
-    observed_day_length = len(seq1)
-    N_DAYS = 60
-    if N_DAYS > observed_day_length:
-        N_DAYS = int(0.8 * observed_day_length)
-    print 'Training data length:', N_DAYS
-
-
-    seq_df = seq.to_frame('seq')
-    seq_df['weekday'] = None
-    seq_df['locationSet'] = None
-    for i in seq_df.index.values:
-        seq_df.loc[i,'weekday'] = i.weekday()
-        temp_set = set(seq_df.loc[i,'seq'])
-        seq_df.loc[i,'locationSet'] = [x for x in temp_set if x!= -99]
-    seq_summary_file = SUMMARY_PATH + fileID + '_daySequence_summary.csv'
-    seq_df.to_csv(seq_summary_file)
-
-    # Seperate data into training set and test set
-    seq_train = seq1[0:N_DAYS]
-    seq_test = seq1[N_DAYS:]
-    end_date_train = seq1.index.values[N_DAYS-1]
-    start_date_train = seq1.index.values[0]
-
-    #############################################################
-    # Location purpose
-    home_ID = 0
-    work_ID = 1
-    ##############################################################
-    # 6. Determine number of locations and parameters to calibrate
-    # Add all the locations visited and frequency into dictionary
+def observe_work_days_and_different_locations(work_ID,seq_train,NUMBER_VISIT_BUFFER):
     location_dict = {}
     work_days_dict = {}
     for i in range(7):
@@ -234,23 +201,27 @@ def evaluatePersonFile(trip_file):
                     location_dict[loc] += 1
                 else:
                     location_dict[loc] = 1
-
-    # work_days_boolean = {}
-    # for i in work_days_dict:
-    #     work_days_boolean[i] = round( sum(work_days_dict[i]) * 1.0 / len(work_days_dict[i]))
-    # print 'Work days:',work_days_boolean
-
-    # Only keep the locations been visited certain times
+    work_days_boolean = {}
+    for i in work_days_dict:
+        work_days_boolean[i] = round(sum(work_days_dict[i]) * 1.0 / len(work_days_dict[i]))
     location_frequent_dict = {}
-    NUMBER_VISIT_BUFFER = 2
     for loc in location_dict:
         if location_dict[loc] > NUMBER_VISIT_BUFFER:
             location_frequent_dict[loc] = location_dict[loc]
-    print 'Frequent visited locations:',location_frequent_dict
+    return (work_days_boolean,location_frequent_dict)
 
-    # Determine non-work activity pattern
-    # Pattern based on day of week
-    non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
+def summarize_locations_in_each_day(seq):
+    seq_df = seq.to_frame('seq')
+    seq_df['weekday'] = None
+    seq_df['locationSet'] = None
+    for i in seq_df.index.values:
+        seq_df.loc[i,'weekday'] = i.weekday()
+        temp_set = set(seq_df.loc[i,'seq'])
+        seq_df.loc[i,'locationSet'] = [x for x in temp_set if x!= -99]
+    seq_summary_file = SUMMARY_PATH + str(fileID) + '_daySequence_summary.csv'
+    seq_df.to_csv(seq_summary_file)
+
+def compare_dayOfWeekMethod_intervalMethod(seq_train,non_work_locations):
     nonwork_days_dict = {}
     for ID in non_work_locations:
         for day_of_week in range(7):
@@ -287,9 +258,7 @@ def evaluatePersonFile(trip_file):
                 else:
                     nonwork_interval_dict[ID].append(i-nonwork_temp_index[ID])
                     nonwork_temp_index[ID] = i
-    # print 'Nonwork activity interval:', nonwork_interval_dict
-
-
+    print 'Nonwork activity interval:', nonwork_interval_dict
 
     bestInterval = {}
     bestAccuracy = {}
@@ -329,108 +298,161 @@ def evaluatePersonFile(trip_file):
     print 'Nonwork locations visited on weekdays:', [x for x in nonwork_days_boolean if nonwork_days_boolean[x] > 0]
     # print 'Nonwork method',non_work_method
     print 'Nonwork locations use method 2:',[x for x in non_work_method if non_work_method[x] == 2]
-    ##############################################################
-    # # 7. Getting information from training data
-    # # Getting the observed travel time and preferred arrival time
-    # # Read trip file
-    # df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
-    #
-    # # Load all the observed travel time and departure times in the trip file (only the training days)
-    # dict_T = {}
-    # dict_arrivalT = {}
-    # dict_endT = {}
-    # dict_duration_raw = {}
-    #
-    # df_trip['date'] = None
-    # for i in df_trip.index.values:
-    #     df_trip.loc[i,'date'] = df_trip.loc[i,'end_time'].to_datetime().date()
-    #
-    # df_trip_train = df_trip[df_trip['date'] <= end_date_train]
-    #
-    # for i in df_trip.index.values:
-    #     end_date = df_trip.loc[i,'date']
-    #     if end_date > end_date_train:
-    #         break
-    #     O_ID = df_trip.loc[i,'locationID_O']
-    #     D_ID = df_trip.loc[i,'locationID_D']
-    #     OD_pair = (O_ID, D_ID)
-    #     travel_time = df_trip.loc[i,'trip_time'].seconds/60.0
-    #     duration = df_trip.loc[i,'duration_D'].seconds/60.0
-    #     # Update travel time dictionary
-    #     if OD_pair not in dict_T:
-    #         dict_T[OD_pair] = [travel_time]
-    #     else:
-    #         dict_T[OD_pair].append(travel_time)
-    #     if D_ID in location_frequent_dict:
-    #         if D_ID not in dict_duration_raw:
-    #             dict_duration_raw[D_ID] = [duration]
-    #         else:
-    #             dict_duration_raw[D_ID].append(duration)
-    #     # Update preferred arrival time list
-    #     arrival_time = df_trip.loc[i,'end_time']
-    #     arrival_time_t = arrival_time.hour * 60 + arrival_time.minute + arrival_time.second/60.0
-    #     if D_ID not in dict_arrivalT:
-    #         dict_arrivalT[D_ID] = [arrival_time_t]
-    #     else:
-    #         dict_arrivalT[D_ID].append(arrival_time_t)
-    #
-    # dict_arrivalT[work_ID] = []
-    # dict_endT[work_ID] = []
-    # df_trip_work_start = df_trip_train[df_trip_train['locationID_D']== work_ID]
-    # df_start_time = df_trip_work_start.groupby(['date']).apply(findWorkStartTime)
-    # dict_arrivalT[work_ID] = list(df_start_time['workStartTime'])
-    #
-    # df_trip_work_end = df_trip_train[df_trip_train['locationID_O']== work_ID]
-    # df_end_time = df_trip_work_end.groupby(['date']).apply(findWorkEndTime)
-    # dict_endT[work_ID] = list(df_end_time['workEndTime'])
-    #
-    # df_home = df_trip_train[df_trip_train['locationID_O']== home_ID]
-    # df_home_number = df_home.groupby(['date']).apply(findHomeWorkVistTimes)
-    # max_home_visits = df_home_number['visitTimes'].max()+1
-    #
-    # df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
-    # df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
-    # max_work_visits = df_work_number['visitTimes'].max()
-    #
-    # # Avg day distance for frequent locations
-    # dict_frequent_day_distance = {}
-    # for ID in location_frequent_dict:
-    #     dict_frequent_day_distance[ID] = N_DAYS * 1.0/location_frequent_dict[ID]
-    # #
-    # ##############################################################
-    # # Model set up
-    # home_locations = range(100, 100+max_home_visits)
-    # work_locations = range(200,200+max_work_visits)
-    # work_locations_other = [i for i in work_locations if i != 200]
-    # non_home_locations = work_locations + non_work_locations
-    # print 'non-work locations:',non_work_locations
-    # print 'non_home locations:', non_home_locations
-    # locations = home_locations + work_locations + non_work_locations
-    # penalty_locations = [work_locations[0]] + non_work_locations
-    #
-    # T = 1440
-    # M = 2000
-    #
-    # # Capture observed arrival departure time information
-    # work_end_time = findMaxProKernel(dict_endT[work_ID],MIN_STARTTIME,MAX_STARTTIME)
-    # preferred_arrival = {}
-    # for i in dict_arrivalT:
-    #     preferred_arrival[i] = findMaxProKernel(dict_arrivalT[i],MIN_STARTTIME,MAX_STARTTIME)
-    # preferred_arrival = replaceHomeWorkLocations(preferred_arrival,home_ID,home_locations)
-    # preferred_arrival = replaceHomeWorkLocations(preferred_arrival,work_ID,work_locations)
-    #
-    # travel_time_dict = {}
-    # for OD in dict_T:
-    #     if OD[0] in location_frequent_dict and OD[1] in location_frequent_dict:
-    #         travel_time_dict[OD] = sum(dict_T[OD]) / len(dict_T[OD])
-    #
-    # travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
-    # travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
-    #
-    # dict_duration = {}
-    # for ID in dict_duration_raw:
-    #     dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID],MIN_DURATION,MAX_DURATION)
-    # print 'Duration of non-work activities:',dict_duration
+    return non_work_method
+
+def observe_travelTime_departureTime(df_trip,df_trip_train,location_frequent_dict,home_ID,work_ID):
+    dict_T = {}
+    dict_arrivalT = {}
+    dict_arrivalT_accurate = {}
+    dict_endT = {}
+    dict_duration_raw = {}
+    for i in df_trip.index.values:
+        end_date = df_trip.loc[i,'date']
+        if end_date > end_date_train:
+            break
+        O_ID = df_trip.loc[i,'locationID_O']
+        D_ID = df_trip.loc[i,'locationID_D']
+        OD_pair = (O_ID, D_ID)
+        travel_time = df_trip.loc[i,'trip_time'].seconds/60.0
+
+        # Update travel time dictionary
+        if OD_pair not in dict_T:
+            dict_T[OD_pair] = [travel_time]
+        else:
+            dict_T[OD_pair].append(travel_time)
+
+        if not pd.isnull(df_trip.loc[i,'duration_D']):
+            duration = df_trip.loc[i,'duration_D'].seconds/60.0
+            if D_ID in location_frequent_dict:
+                if D_ID not in dict_duration_raw:
+                    dict_duration_raw[D_ID] = [duration]
+                else:
+                    dict_duration_raw[D_ID].append(duration)
+        # Update preferred arrival time list
+        arrival_time = df_trip.loc[i,'end_time']
+        arrival_time_t = arrival_time.hour * 60 + arrival_time.minute + arrival_time.second/60.0
+        if D_ID not in dict_arrivalT:
+            dict_arrivalT[D_ID] = [arrival_time_t]
+        else:
+            dict_arrivalT[D_ID].append(arrival_time_t)
+
+        if i+1 in df_trip.index.values:
+            if O_ID == home_ID and df_trip.loc[i+1,'locationID_D'] == home_ID:
+                if D_ID not in dict_arrivalT_accurate:
+                    dict_arrivalT_accurate[D_ID] = [arrival_time_t]
+                else:
+                    dict_arrivalT_accurate[D_ID].append(arrival_time_t)
+
+    dict_arrivalT[work_ID] = []
+    dict_endT[work_ID] = []
+    df_trip_work_start = df_trip_train[df_trip_train['locationID_D']== work_ID]
+    df_start_time = df_trip_work_start.groupby(['date']).apply(findWorkStartTime)
+    dict_arrivalT[work_ID] = list(df_start_time['workStartTime'])
+    work_temp_arrival_list = list(df_start_time['workStartTime_accurate'])
+    work_temp_arrival_list = [x for x in work_temp_arrival_list if x != -1]
+    if len(work_temp_arrival_list) > 0:
+        dict_arrivalT[work_ID] = work_temp_arrival_list
+
+    df_trip_work_end = df_trip_train[df_trip_train['locationID_O']== work_ID]
+    df_end_time = df_trip_work_end.groupby(['date']).apply(findWorkEndTime)
+    dict_endT[work_ID] = list(df_end_time['workEndTime'])
+    work_temp_end_list = list(df_end_time['workEndTime_accurate'])
+    work_temp_end_list = [x for x in work_temp_end_list if x != -1]
+    if len(work_temp_end_list) > 0:
+        dict_endT[work_ID] = work_temp_end_list
+
+    df_home = df_trip_train[df_trip_train['locationID_O']== home_ID]
+    df_home_number = df_home.groupby(['date']).apply(findHomeWorkVistTimes)
+    max_home_visits = df_home_number['visitTimes'].max()+1
+
+    df_work = df_trip_train[df_trip_train['locationID_O']== work_ID]
+    df_work_number = df_work.groupby(['date']).apply(findHomeWorkVistTimes)
+    max_work_visits = df_work_number['visitTimes'].max()
+
+    # Avg day distance for frequent locations
+    dict_frequent_day_distance = {}
+    for ID in location_frequent_dict:
+        dict_frequent_day_distance[ID] = N_DAYS * 1.0/location_frequent_dict[ID]
+    work_end_time = findMaxProKernel(dict_endT[work_ID],MIN_STARTTIME,MAX_STARTTIME)
+    preferred_arrival = {}
+    for i in dict_arrivalT:
+        preferred_arrival[i] = findMaxProKernel(dict_arrivalT[i],MIN_STARTTIME,MAX_STARTTIME)
+    for i in dict_arrivalT_accurate:
+        preferred_arrival[i] = findMaxProKernel(dict_arrivalT_accurate[i], MIN_STARTTIME, MAX_STARTTIME)
+
+    travel_time_dict = {}
+    for OD in dict_T:
+        if OD[0] in location_frequent_dict and OD[1] in location_frequent_dict:
+            travel_time_dict[OD] = sum(dict_T[OD]) / len(dict_T[OD])
+    dict_duration = {}
+    for ID in dict_duration_raw:
+        dict_duration[ID] = findMaxProKernel(dict_duration_raw[ID], MIN_DURATION, MAX_DURATION)
+    return [max_home_visits,max_work_visits,work_end_time,preferred_arrival,travel_time_dict,dict_duration]
+
+
+seq = DataProcessingFunctions_Android.readDaySequenceFromCSV(seq_file)
+seq1 = seq[1:]
+
+observed_day_length = len(seq1)
+N_DAYS = observed_day_length
+print 'Training data length:', N_DAYS
+# summarize_locations_in_each_day(seq)
+# Seperate data into training set and test set
+seq_train = seq1[0:N_DAYS]
+end_date_train = seq1.index.values[N_DAYS-1]
+start_date_train = seq1.index.values[0]
+#############################################################
+# Location purpose
+home_ID = 0
+work_ID = 1
+##############################################################
+# 6. Determine number of locations and parameters to calibrate
+# Add all the locations visited and frequency into dictionary
+# Only keep the locations been visited certain times
+NUMBER_VISIT_BUFFER = 2
+(work_days_boolean, location_frequent_dict)= observe_work_days_and_different_locations(work_ID,seq_train,NUMBER_VISIT_BUFFER)
+print 'Work days:',work_days_boolean
+print 'Frequent visited locations:',location_frequent_dict
+# Determine non-work activity pattern
+# Pattern based on day of week
+non_work_locations = list({x for x in location_frequent_dict if x != home_ID and x!= work_ID})
+compare_dayOfWeekMethod_intervalMethod(seq_train,non_work_locations)
+#############################################################
+# 7. Getting information from training data
+# Getting the observed travel time and preferred arrival time
+# Read trip file
+df_trip = DataProcessingFunctions_Android.readTripsFromCSV(trip_file)
+df_trip['date'] = None
+for i in df_trip.index.values:
+    df_trip.loc[i,'date'] = df_trip.loc[i,'end_time'].to_datetime().date()
+
+df_trip_train = df_trip[df_trip['date'] <= end_date_train]
+# Load all the observed travel time and departure times in the trip file (only the training days)
+
+[max_home_visits,max_work_visits,work_end_time,preferred_arrival,travel_time_dict,dict_duration] = observe_travelTime_departureTime(df_trip,df_trip_train,location_frequent_dict,home_ID,work_ID)
+#
+##############################################################
+# Model set up
+home_locations = range(100, 100+max_home_visits)
+work_locations = range(200,200+max_work_visits)
+work_locations_other = [i for i in work_locations if i != 200]
+non_home_locations = work_locations + non_work_locations
+print 'non-work locations:',non_work_locations
+print 'non_home locations:', non_home_locations
+locations = home_locations + work_locations + non_work_locations
+penalty_locations = [work_locations[0]] + non_work_locations
+
+T = 1440
+M = 2000
+
+# Capture observed arrival departure time information
+
+preferred_arrival = replaceHomeWorkLocations(preferred_arrival,home_ID,home_locations)
+preferred_arrival = replaceHomeWorkLocations(preferred_arrival,work_ID,work_locations)
+travel_time_dict = replaceHomeWorkLinks(travel_time_dict,home_ID,home_locations)
+travel_time_dict = replaceHomeWorkLinks(travel_time_dict,work_ID,work_locations)
+print 'Preferred arrival time:', preferred_arrival
+print 'Duration of non-work activities:',dict_duration
 ##############################################################
 # 8. Generate the initial parameter vector
 # Parameter explanation
@@ -443,8 +465,8 @@ def evaluatePersonFile(trip_file):
 #     2. deltaU, which is the need growth rate
 #     3. early penalty
 #     4. late penalty
-input_parameters = [1,100,1,1,1,11,1,1,1,3,1,1]
-bounds = [[0,10],[0,100,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
+input_parameters = [1,2,1,1,1,11,1,1,1,3,1,1]
+bounds = [[0,10],[0,20,],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5],[0,10],[0,20],[0,5],[0,5]]
 
 def similarityEvaluationForParameterSet(input_parameters):
     # Travel disutility rhoT (we can fix this)
@@ -682,11 +704,11 @@ def similarityEvaluationForParameterSet(input_parameters):
 
 machine_start_time = time.time()
 
-Flag_ID = 1
-for trip_file in tripList:
-    print Flag_ID,'/',len(tripList)
-    Flag_ID += 1
-    evaluatePersonFile(trip_file)
+# Flag_ID = 1
+# for trip_file in tripList:
+#     print Flag_ID,'/',len(tripList)
+#     Flag_ID += 1
+#     evaluatePersonFile(trip_file)
 
 # trip_file = 'App_data/Processed_Data/GPS_trips_processed/09a963d1-d7cb-42ed-9825-822e1dec2d57_daySequence.csv'
 # evaluatePersonFile(trip_file)
